@@ -1,0 +1,26 @@
+import {test,expect} from '@playwright/test'
+test('blank ETD shows all periods; explicit ETD filters; export shares scope',async({page})=>{
+ await page.goto('http://127.0.0.1:8004/')
+ await page.getByLabel('账号',{exact:true}).fill('admin');await page.getByLabel('密码',{exact:true}).fill('Isolated-test-password-2026!');await page.getByRole('button',{name:'登录',exact:true}).click()
+ const app=page.frameLocator('iframe');await expect(app.locator('#view-home')).toBeVisible()
+ const initial=page.waitForRequest(r=>r.url().endsWith('/api/quotes/search')&&r.method()==='POST')
+ await app.locator('#view-home .entry').first().click()
+ expect((await initial).postDataJSON().date_scope).toBe('all')
+ await expect(app.locator('#q-table tbody')).toContainText('鹿特丹')
+ const exportReq=page.waitForRequest(r=>r.url().endsWith('/api/excel/export'))
+ const download=page.waitForEvent('download');await app.getByRole('button',{name:'📥 导出 Excel',exact:true}).click()
+ const exported=(await exportReq).postDataJSON();expect(exported.date_scope).toBe('all');expect(exported.export_layout).toBe('simple');await download
+ await app.locator('#q-origin').fill('')
+ const fullRequest=page.waitForRequest(r=>r.url().endsWith('/api/excel/export'));const fullDownload=page.waitForEvent('download')
+ await app.getByRole('button',{name:'📥 导出 Excel',exact:true}).click()
+ const full=(await fullRequest).postDataJSON();expect(full.origin_port_id).toBe('');expect(full.export_layout).toBe('template');expect(full.date_scope).toBe('all');await fullDownload
+ await app.locator('#q-etd').fill('2026-10-25')
+ const dated=page.waitForRequest(r=>r.url().endsWith('/api/quotes/search')&&r.method()==='POST')
+ await app.getByRole('button',{name:'🔍 查询报价',exact:true}).click()
+ expect((await dated).postDataJSON().date_scope).toBe('applicable')
+ await expect(app.locator('#q-table tbody')).toContainText('没有符合条件的报价')
+ await app.locator('#q-etd').fill('2026-11-15');await app.getByRole('button',{name:'🔍 查询报价',exact:true}).click()
+ await expect(app.locator('#q-table tbody')).toContainText('鹿特丹')
+ await app.locator('#q-etd').fill('');await app.getByRole('button',{name:'🔍 查询报价',exact:true}).click()
+ await expect(app.locator('#q-table tbody')).toContainText('鹿特丹')
+})

@@ -1,0 +1,5 @@
+{
+  "status": "passed",
+  "scope": "fresh archive extraction, manifest, isolated Python dependencies, npm ci, frontend rebuild, environment tests, offline real HTTP workflow and restore",
+  "ai_calls": 0
+}

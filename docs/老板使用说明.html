@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>海运报价系统｜快速使用指南</title>
+<style>
+:root{--navy:#142d45;--teal:#087c83;--ink:#22394c;--muted:#627789;--line:#dce5eb;--paper:#fff;--bg:#f1f5f8}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.8}a{color:var(--teal)}main{max-width:1000px;margin:auto;padding:32px 24px 50px}header{background:var(--navy);color:white;padding:42px;border-radius:20px}.eyebrow{font-size:13px;letter-spacing:2px;color:#a9dfe0}h1{font-size:34px;line-height:1.4;margin:10px 0}header p{color:#d4e4ee;max-width:700px;margin:10px 0 24px}.actions{display:flex;gap:12px;flex-wrap:wrap}.button{display:inline-block;padding:10px 20px;border-radius:8px;background:var(--teal);color:white;text-decoration:none;border:0;font:inherit;cursor:pointer}.secondary{background:transparent;border:1px solid #7592a5;color:white}.address{font-size:13px;color:#bad0df;margin:14px 0 0;overflow-wrap:anywhere}.nav{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}.nav a{background:white;border:1px solid var(--line);padding:6px 16px;border-radius:30px;text-decoration:none}section{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:26px 30px;margin:18px 0;scroll-margin-top:20px}h2{font-size:23px;margin:0 0 12px;color:var(--navy)}h3{font-size:17px;margin:0 0 6px}p{margin:9px 0}.muted{color:var(--muted);font-size:14px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.card{background:#f5f9fb;border:1px solid var(--line);border-radius:10px;padding:18px}.number{display:inline-grid;place-items:center;background:#e1f1f1;color:var(--teal);width:30px;height:30px;border-radius:50%;margin-right:9px;font-size:16px}.note{background:#fff7e6;border-left:4px solid #daa64b;padding:12px 16px;margin-top:16px}.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:18px 0}.flow span{background:#eaf3f6;padding:7px 12px;border-radius:6px}.flow b{color:#8095a5}ol,ul{padding-left:24px;margin:10px 0}li{margin:8px 0}table{width:100%;border-collapse:collapse;font-size:15px}td,th{padding:12px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--navy);background:#f5f9fb}footer{color:var(--muted);font-size:13px;padding:10px 4px}.tag{display:inline-block;color:var(--teal);background:#e6f3ef;padding:2px 9px;border-radius:5px;font-size:13px}@media(max-width:650px){main{padding:16px 12px}header{padding:25px}h1{font-size:27px}section{padding:22px 20px}.grid{grid-template-columns:1fr}table{font-size:14px}}@media print{body{background:white;font-size:12px}main{max-width:none;padding:0}header{background:white!important;color:var(--navy);border:1px solid var(--line);padding:20px}header p,.eyebrow,.address{color:var(--muted)}.actions,.nav{display:none}section{break-inside:avoid;padding:16px 20px;margin:12px 0}h1{font-size:26px}h2{font-size:19px}a{color:inherit;text-decoration:none}footer{font-size:11px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="eyebrow">青岛港国际海运报价管理系统 · 管理者版</div>
+<h1>查报价、看变化、审批入库</h1>
+<p>把公司内部报价集中管理。查价时核对来源与适用条件，更新时先校对、后审批，每次改价都留下记录。</p>
+<div class="actions"><a class="button" href="http://127.0.0.1:8000/" target="_blank" rel="noopener">打开报价系统 →</a><button class="button secondary" onclick="window.print()">打印／保存为 PDF</button></div>
+<div class="address">本机地址：http://127.0.0.1:8000/　·　其他电脑请使用主机内网地址（当前192.168.31.25:8000），并保持网络互通。</div>
+</header>
+<nav class="nav" aria-label="指南目录"><a href="#login">登录</a><a href="#search">查价与导出</a><a href="#approval">查看与审批</a><a href="#update">更新报价</a><a href="#help">常见问题</a></nav>
+<section id="login">
+<h2><span class="number">1</span>先登录</h2>
+<p><strong>初始管理员用户名：admin</strong>。临时密码向部署人员领取；首次登录后，按页面提示修改为自己的密码。</p>
+<p class="muted">管理员可以维护资料、管理账号、审批和备份。员工使用各自账号，管理自己的报价草稿；员工不能审批入库。</p>
+<div class="grid"><div class="card"><h3>价格查询</h3><p>查看已审批的正式报价，筛选航线，导出内部报表。</p><a href="#search">看查价步骤 ↓</a></div><div class="card"><h3>更新报价</h3><p>录入／上传、校对报价，查看新增与修改，提交并审批。</p><a href="#approval">看审批步骤 ↓</a></div></div>
+</section>
+<section id="search">
+<h2><span class="number">2</span>查询报价，导出报表</h2>
+<ol><li>首页点击<strong>“价格查询”</strong>。</li><li>选择起运港、目的港、船公司；需要计算小计时，选择箱型并输入箱量。</li><li>填写 <strong>ETD（预计开船日）</strong>，点击查询。不填日期时，按当天查询适用报价；起运港默认青岛。</li><li>对照船公司、供应商／协议、有效期、已含／另计费用和适用条件，选择合适报价。</li><li>完成查询后点击<strong>“📥 导出 Excel”</strong>，下载 Excel 报表。</li></ol>
+<div class="note"><strong>想看总表：</strong>保留起运港，其他筛选留空，查询后导出该起运港到全部目的港的适用报价。导出包含全部匹配记录，不受当前页码限制；想包含未来或过期报价，需主动选择“全部有效期”。</div>
+<p class="muted">小计是海运费小计，不代表全包总价；缺少所选箱型价格时不会按零计算。导出保留来源和成本信息，仅供公司内部使用。</p>
+</section>
+<section id="approval">
+<h2><span class="number">3</span>老板重点看：变化与审批</h2>
+<div class="flow" aria-label="审批流程"><span>更新报价</span><b>→</b><span>差异对比与审批</span><b>→</b><span>选批次核对</span><b>→</b><span>审批通过并入库</span></div>
+<table><thead><tr><th style="width:24%">页面显示</th><th>核对重点</th></tr></thead><tbody><tr><td><strong>新增</strong></td><td>是不是新的目的港、来源、服务或有效期？箱价、费用和条件是否齐全？</td></tr><tr><td><strong>修改</strong></td><td>看清旧值 → 新值，特别是箱价、有效期、费用和限制；必要时下载原件核对。</td></tr><tr><td><strong>冲突／待修正</strong></td><td>先让录入人员核对重叠有效期、缺失信息或旧版本，修正后重新提交。</td></tr><tr><td><strong>无变化</strong></td><td>不需要重复更新，不会因为重复上传而重复发布。</td></tr></tbody></table>
+<ol><li>在提取表格中完成校对，点击<strong>提交审批 →</strong>，查看本次新增与修改。</li><li>管理员在差异页面确认本次全部内容，选择<strong>审批通过并入库</strong>；有问题则驳回并写明原因。</li><li>通过后进入正式报价查询；提交后不可直接修改，需要先撤回或驳回，再修改、重新提交。</li></ol>
+<p class="muted">管理员可以审批自己提交的批次，系统保留记录。草稿、AI结果及待审批报价都不会自动进入正式查询。</p>
+</section>
+<section id="update">
+<h2><span class="number">4</span>员工如何更新报价</h2>
+<div class="flow"><span>人工录入／上传原件</span><b>→</b><span>提取并生成草稿</span><b>→</b><span>人工校对</span><b>→</b><span>对比并提交审批</span></div>
+<ul><li><strong>人工录入：</strong>点击“新增人工报价”，填写港口、船公司、报价来源、有效期、费用、箱价等内容。</li><li><strong>固定 Excel 模板：</strong>可本机解析；先预览，再选行生成草稿。</li><li><strong>AI 提取：</strong>其他 Excel、PDF、扫描件或图片，需逐文件确认是虚构或已脱敏样本，才能发送 DeepSeek 提取。</li><li><strong>人工校对：</strong>对照原件改价、补齐信息，确认起运港、适用条件和零运费。缺有效期可保存草稿，但不能审批发布。</li></ul>
+<div class="note"><strong>当前试用范围：</strong>AI 只允许虚构或已脱敏样本，真实报价暂不允许外发。不要直接上传真实业务报价进行 AI 提取；正式资料可走人工录入或固定模板本机解析。</div>
+<p class="muted">提取可能有误读。系统分别保留原始提取和人工修改结果，后续可追溯。</p>
+</section>
+<section id="help">
+<h2>遇到问题，先看这里</h2>
+<table><tbody><tr><th style="width:24%">打不开系统</th><td>确认主机已开机并启动服务。网络变化可能使地址改变，请向部署人员确认最新地址。</td></tr><tr><th>查不到报价</th><td>检查是否已经审批入库、开船日是否在有效期内，以及筛选条件是否太多。</td></tr><tr><th>不能提交审批</th><td>按页面提示补齐缺项、确认条件或处理冲突，再重新查看差异。</td></tr><tr><th>保存公司数据</th><td>管理员进入“使用说明 → 账号与备份”，创建并下载完整备份；建议每天使用后及批量改价前备份，并另存至公司受控位置。</td></tr></tbody></table>
+<p class="muted">跨设备访问和 HTTPS 仍需公司现场配置确认。报价适用不代表实际舱位已确认，订舱前仍应向报价来源核实。</p>
+</section>
+<footer>本地试用版 1.0.0 · 本说明可离线打开、打印或保存为 PDF · 不含登录密码或业务报价。</footer>
+</main>
+</body>
+</html>

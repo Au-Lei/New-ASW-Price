@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-dotenv
+httpx
+pytest
+
+pillow
+pypdf
+pymupdf>=1.26,<2

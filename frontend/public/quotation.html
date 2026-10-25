@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>青岛港国际海运报价管理系统</title>
+<style>
+:root{
+  --navy:#0b2545; --navy2:#13315c; --sea:#1b6ca8; --sea2:#2a8fd0;
+  --foam:#e8f4fb; --sand:#f7f5ef; --line:#d7e3ee;
+  --ok:#1a9e6f; --warn:#e08e0b; --bad:#d64545; --modify:#fff3c4; --add:#d6f5e3;
+  --txt:#1c2b3a; --muted:#6b7d8f;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--txt);background:var(--sand);min-height:100vh}
+button{font-family:inherit;cursor:pointer;border:none;border-radius:8px;padding:9px 16px;font-size:14px;transition:.18s}
+button:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{background:var(--sea);color:#fff}
+.btn-primary:hover:not(:disabled){background:var(--sea2)}
+.btn-ghost{background:#fff;color:var(--sea);border:1px solid var(--line)}
+.btn-ghost:hover:not(:disabled){background:var(--foam)}
+.btn-ok{background:var(--ok);color:#fff}
+.btn-ok:hover:not(:disabled){filter:brightness(1.08)}
+.btn-danger{background:var(--bad);color:#fff}
+.view{display:none}
+.view.active{display:block}
+
+.topbar{background:linear-gradient(135deg,var(--navy),var(--navy2));color:#fff;padding:14px 28px;display:flex;align-items:center;gap:14px;box-shadow:0 2px 12px rgba(11,37,69,.25);position:sticky;top:0;z-index:50}
+.topbar .logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--sea2),var(--sea));display:flex;align-items:center;justify-content:center;font-size:20px}
+.topbar h1{font-size:17px;font-weight:600;letter-spacing:.5px}
+.topbar .sub{font-size:12px;color:#9fc2e0;margin-top:1px}
+.topbar .spacer{flex:1}
+.topbar .ver{font-size:12px;color:#9fc2e0;background:rgba(255,255,255,.08);padding:5px 12px;border-radius:20px}
+.topbar .btn-help{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);padding:8px 16px;font-size:13px}
+.topbar .btn-help:hover{background:rgba(255,255,255,.22)}
+
+.home{max-width:1000px;margin:0 auto;padding:70px 24px}
+.home .hero{text-align:center;margin-bottom:46px}
+.home .hero .wave{font-size:44px;margin-bottom:10px}
+.home .hero h2{font-size:30px;color:var(--navy);margin-bottom:10px}
+.home .hero p{color:var(--muted);font-size:14px;line-height:1.7}
+.entries{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+.entry{background:#fff;border:1px solid var(--line);border-radius:16px;padding:38px 30px;text-align:center;cursor:pointer;transition:.22s;position:relative;overflow:hidden}
+.entry::before{content:"";position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,var(--sea2),var(--sea))}
+.entry:hover{transform:translateY(-4px);box-shadow:0 14px 34px rgba(27,108,168,.18);border-color:var(--sea2)}
+.entry .ic{width:64px;height:64px;margin:0 auto 18px;border-radius:18px;background:var(--foam);display:flex;align-items:center;justify-content:center;font-size:30px}
+.entry h3{font-size:20px;color:var(--navy);margin-bottom:8px}
+.entry p{font-size:13px;color:var(--muted);line-height:1.6}
+
+.page{max-width:1500px;margin:0 auto;padding:26px 24px 60px}
+.page-head{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+.page-head h2{font-size:21px;color:var(--navy)}
+.page-head .spacer{flex:1}
+.back-link{color:var(--sea);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:5px}
+.back-link:hover{text-decoration:underline}
+
+/* ===== 帮助页 ===== */
+.help-wrap{max-width:1100px;margin:0 auto;padding:30px 24px 70px}
+.help-hero{background:linear-gradient(135deg,var(--navy),var(--navy2));color:#fff;border-radius:16px;padding:34px 36px;margin-bottom:24px;position:relative;overflow:hidden}
+.help-hero::after{content:"⚓";position:absolute;right:30px;bottom:-18px;font-size:120px;opacity:.08}
+.help-hero h2{font-size:24px;margin-bottom:10px}
+.help-hero p{font-size:14px;color:#c7dcf0;line-height:1.8;max-width:760px}
+.help-hero .meta{margin-top:16px;display:flex;gap:10px;flex-wrap:wrap}
+.help-hero .chip{font-size:12px;background:rgba(255,255,255,.12);padding:5px 12px;border-radius:20px}
+.help-sec{background:#fff;border:1px solid var(--line);border-radius:14px;padding:26px 30px;margin-bottom:20px}
+.help-sec h3{font-size:17px;color:var(--navy);margin-bottom:16px;display:flex;align-items:center;gap:9px}
+.help-sec h3 .n{width:28px;height:28px;border-radius:8px;background:var(--foam);color:var(--sea);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}
+.help-sec p,.help-sec li{font-size:13.5px;line-height:1.85;color:#33465a}
+.help-sec ul,.help-sec ol{padding-left:22px}
+.help-sec li{margin-bottom:6px}
+.help-sec b{color:var(--navy)}
+.feat-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.feat{background:var(--foam);border-radius:10px;padding:16px 18px}
+.feat .ft{font-weight:700;color:var(--navy);font-size:14px;margin-bottom:6px;display:flex;align-items:center;gap:7px}
+.feat .fd{font-size:12.5px;color:#4a5d70;line-height:1.7}
+.steps-demo{counter-reset:sd}
+.steps-demo .sd{display:flex;gap:16px;padding:14px 0;border-bottom:1px dashed var(--line)}
+.steps-demo .sd:last-child{border-bottom:none}
+.steps-demo .sd .num{counter-increment:sd;flex-shrink:0;width:30px;height:30px;border-radius:50%;background:var(--sea);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+.steps-demo .sd .num::before{content:counter(sd)}
+.steps-demo .sd .c{font-size:13.5px;line-height:1.8;color:#33465a}
+.steps-demo .sd .c b{color:var(--navy)}
+.rule-table{width:100%;border-collapse:collapse;font-size:13px}
+.rule-table th{background:var(--navy2);color:#fff;padding:10px 12px;text-align:left;font-weight:600;font-size:12.5px}
+.rule-table td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.65}
+.rule-table tr:nth-child(even) td{background:#fafcfe}
+.rule-table td:first-child{font-weight:600;color:var(--navy);white-space:nowrap}
+.limit-list li{color:#7a4b00}
+.limit-list{list-style:none;padding-left:0}
+.limit-list li{position:relative;padding-left:22px;margin-bottom:9px}
+.limit-list li::before{content:"⚠";position:absolute;left:0;color:var(--warn);font-size:13px}
+.tip-box{background:#fff8e1;border:1px solid #f0d38a;border-radius:10px;padding:14px 18px;font-size:13px;color:#6b5200;line-height:1.75;margin-top:14px}
+.legend-inline{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:#4a5d70}
+.legend-inline span{display:flex;align-items:center;gap:6px}
+.legend-inline i{width:16px;height:16px;border-radius:4px;display:inline-block;border:1px solid rgba(0,0,0,.08)}
+
+.filters{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px 18px;align-items:end}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600}
+.field input,.field select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff;color:var(--txt);outline:none;transition:.15s}
+.field input:focus,.field select:focus{border-color:var(--sea2);box-shadow:0 0 0 3px rgba(42,143,208,.13)}
+.filters .actions{display:flex;gap:10px;grid-column:1/-1;justify-content:flex-end;margin-top:4px}
+
+.statbar{display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap}
+.stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 16px;font-size:13px;display:flex;align-items:center;gap:8px}
+.stat b{color:var(--sea);font-size:16px}
+.stat .dot{width:9px;height:9px;border-radius:50%}
+
+.tablewrap{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:auto;max-height:calc(100vh - 320px);position:relative}
+table.grid{border-collapse:separate;border-spacing:0;width:100%;min-width:1900px;font-size:13px}
+table.grid thead th{position:sticky;top:0;z-index:5;background:var(--navy2);color:#fff;font-weight:600;padding:11px 12px;text-align:left;white-space:nowrap;font-size:12.5px;border-bottom:2px solid var(--sea)}
+table.grid tbody td{padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+table.grid tbody tr:nth-child(even){background:#fafcfe}
+table.grid tbody tr:hover{background:var(--foam)}
+.frz1{position:sticky;left:0;z-index:3;background:inherit;min-width:120px;box-shadow:2px 0 0 var(--line)}
+.frz2{position:sticky;left:120px;z-index:3;background:inherit;min-width:120px;box-shadow:2px 0 0 var(--line)}
+thead .frz1,thead .frz2{z-index:7;background:var(--navy2)}
+tbody tr:nth-child(even) .frz1,tbody tr:nth-child(even) .frz2{background:#fafcfe}
+tbody tr:nth-child(odd) .frz1,tbody tr:nth-child(odd) .frz2{background:#fff}
+tbody tr:hover .frz1,tbody tr:hover .frz2{background:var(--foam)}
+.cell-edit{width:100%;border:1px solid transparent;background:transparent;padding:4px 6px;border-radius:5px;font-size:13px;color:var(--txt);outline:none}
+.cell-edit:hover{border-color:var(--line)}
+.cell-edit:focus{border-color:var(--sea2);background:#fff;box-shadow:0 0 0 2px rgba(42,143,208,.15)}
+.cell-empty{background:#fff8e1 !important;border-color:#f0d38a !important}
+.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
+.tag-line{background:var(--foam);color:var(--sea)}
+.tag-valid{background:#e6f7ef;color:var(--ok)}
+.tag-soon{background:#fef3d6;color:var(--warn)}
+.tag-exp{background:#fde3e3;color:var(--bad)}
+.tag-miss{background:#eef1f4;color:var(--muted)}
+.price{font-weight:700;color:var(--navy);font-variant-numeric:tabular-nums}
+.price-empty{color:#b0bcc8;font-weight:400}
+
+tr.row-modify{background:var(--modify) !important}
+tr.row-add{background:var(--add) !important}
+tr.row-modify .frz1,tr.row-modify .frz2{background:var(--modify) !important}
+tr.row-add .frz1,tr.row-add .frz2{background:var(--add) !important}
+.diff-cell{background:rgba(224,142,11,.28) !important;border-radius:4px}
+.badge-diff{font-size:10.5px;padding:2px 7px;border-radius:10px;font-weight:700;margin-left:6px}
+.badge-modify{background:#f5c542;color:#5a4300}
+.badge-add{background:#3fc785;color:#fff}
+
+.steps{display:flex;gap:0;margin-bottom:24px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 26px}
+.step{flex:1;display:flex;align-items:center;gap:12px;position:relative;opacity:.5;transition:.2s}
+.step.on{opacity:1}
+.step .num{width:34px;height:34px;border-radius:50%;background:var(--foam);color:var(--sea);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0}
+.step.on .num{background:var(--sea);color:#fff}
+.step.done .num{background:var(--ok);color:#fff}
+.step .t{font-size:13px;font-weight:600;color:var(--navy)}
+.step .d{font-size:11.5px;color:var(--muted)}
+.step:not(:last-child)::after{content:"";position:absolute;right:16px;top:50%;width:calc(100% - 200px);height:2px;background:var(--line)}
+.step.done:not(:last-child)::after{background:var(--ok)}
+
+.dropzone{border:2px dashed var(--sea2);border-radius:16px;padding:44px 24px;text-align:center;background:linear-gradient(180deg,#f5fbff,#eef7fd);transition:.2s;cursor:pointer}
+.dropzone:hover,.dropzone.drag{background:#e6f4fc;border-color:var(--sea)}
+.dropzone .ic{font-size:40px;margin-bottom:10px}
+.dropzone h4{color:var(--navy);font-size:16px;margin-bottom:6px}
+.dropzone p{color:var(--muted);font-size:13px}
+.filelist{margin-top:18px;display:flex;flex-direction:column;gap:10px}
+.fileitem{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+.fileitem .fi-ic{font-size:22px}
+.fileitem .fi-name{flex:1;font-size:13px;font-weight:600}
+.fileitem .fi-meta{font-size:11.5px;color:var(--muted)}
+.fileitem .fi-status{font-size:12px;font-weight:600}
+.st-parsing{color:var(--warn)}
+.st-done{color:var(--ok)}
+.st-err{color:var(--bad)}
+
+.diff-summary{display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 20px;margin-bottom:16px}
+.diff-summary .item{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.diff-summary .swatch{width:18px;height:18px;border-radius:5px;border:1px solid rgba(0,0,0,.08)}
+.sw-modify{background:var(--modify)} .sw-add{background:var(--add)}
+.diff-summary .legend{margin-left:auto;display:flex;gap:16px;font-size:12px;color:var(--muted)}
+
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.toolbar .spacer{flex:1}
+.chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none}
+.chk input{width:15px;height:15px;accent-color:var(--sea)}
+.empty-state{text-align:center;padding:50px 20px;color:var(--muted);font-size:14px}
+.empty-state .ic{font-size:38px;margin-bottom:10px}
+
+#toast{position:fixed;top:74px;left:50%;transform:translateX(-50%) translateY(-20px);background:var(--navy);color:#fff;padding:12px 22px;border-radius:10px;font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:.28s;z-index:999}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.ok{background:var(--ok)}
+#toast.warn{background:var(--warn)}
+
+@media(max-width:820px){
+  .entries{grid-template-columns:1fr}
+  .feat-grid{grid-template-columns:1fr}
+  .steps{flex-direction:column;gap:14px}
+  .step:not(:last-child)::after{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">⚓</div>
+  <div>
+    <h1>青岛港国际海运报价管理系统</h1>
+    <div class="sub">Qingdao Ocean Freight Quotation · 本地版 v1.0</div>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn-help" onclick="go('help')">📖 使用说明</button>
+  <div class="ver">主表仅修改/新增 · ETD 仅校验有效期</div>
+</div>
+
+<!-- ============ 首页 ============ -->
+<div id="view-home" class="view active">
+  <div class="home">
+    <div class="hero">
+      <div class="wave">🌊🚢🌊</div>
+      <h2>选择你要进行的操作</h2>
+      <p>在线查询已上传资料中的海运报价，或上传新资料提取报价、校对审批后更新标价表</p>
+    </div>
+    <div class="entries">
+      <div class="entry" onclick="go('query')">
+        <div class="ic">🔍</div>
+        <h3>价格查询</h3>
+        <p>按起运港、目的港、船公司、箱型、ETD 查询现有报价<br>ETD 仅校验是否在报价有效期内 · 支持导出 Excel</p>
+      </div>
+      <div class="entry" onclick="go('update')">
+        <div class="ic">📤</div>
+        <h3>更新报价</h3>
+        <p>上传报价资料 → 提取报价 → 校对编辑 → 审批入库<br>仅修改与新增，改动行高亮显示</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 使用说明 ============ -->
+<div id="view-help" class="view">
+  <div class="help-wrap">
+    <div class="page-head">
+      <span class="back-link" onclick="go('home')">← 返回首页</span>
+      <h2>📖 使用说明</h2>
+    </div>
+
+    <div class="help-hero">
+      <h2>青岛港国际海运报价管理系统</h2>
+      <p>本系统用于国际海运业务中的报价管理与查询。把各代理、船公司提供的协议价资料（Excel / PDF / 图片）上传后，系统提取结构化报价，经人工校对、审批后更新到标价表；业务人员在查询页按港口、船公司、箱型、开船日快速查到有效报价并导出 Excel。</p>
+      <div class="meta">
+        <span class="chip">本地版 v1.0</span>
+        <span class="chip">已连接本地报价库</span>
+        <span class="chip">主表仅修改/新增</span>
+        <span class="chip">18 列对齐报价模板</span>
+      </div>
+    </div>
+
+    <div class="help-sec">
+      <h3><span class="n">1</span>项目是干什么的</h3>
+      <p>国际海运报价来源多、格式杂（代理报价单、船公司协议价，有文件、图片），人工查询和汇总费时且容易出错。本系统解决三件事：</p>
+      <ul>
+        <li><b>统一入库</b>：把各种格式的报价资料提取成模板规定的 18 列结构化数据。</li>
+        <li><b>在线查询</b>：按起运港、目的港、船公司、箱量箱型、开船日（ETD）查有效报价。</li>
+        <li><b>安全更新</b>：提取结果可校对修改，审批后只对主表做「修改 / 新增」，不删除已有报价；变更行高亮可查。</li>
+      </ul>
+    </div>
+
+    <div class="help-sec">
+      <h3><span class="n">2</span>功能有哪些</h3>
+      <div class="feat-grid">
+        <div class="feat">
+          <div class="ft">🔍 价格查询</div>
+          <div class="fd">按起运港、目的港（中/英文）、船公司、箱量箱型、ETD 筛选；结果 18 列展示，前两列冻结，有效期状态徽章提示；一键导出 Excel。</div>
+        </div>
+        <div class="feat">
+          <div class="ft">📤 上传资料</div>
+          <div class="fd">支持 PDF / Excel / 图片真实上传，显示解析状态，全部解析后可提取报价。</div>
+        </div>
+        <div class="feat">
+          <div class="ft">✨ 提取报价</div>
+          <div class="fd">把资料提取为结构化报价，以可编辑表格展示；空格标黄待补充，有效期缺失行单独标记。</div>
+        </div>
+        <div class="feat">
+          <div class="ft">✏️ 校对编辑</div>
+          <div class="fd">所有单元格可直接编辑，可新增行、移出本次待提交行；移出不影响主表已有报价。</div>
+        </div>
+        <div class="feat">
+          <div class="ft">🔄 差异比对</div>
+          <div class="fd">按港口、船公司、价格来源、服务及有效期比对：修改行黄底、变化单元格深黄、新增行绿底；汇总修改/新增数量。</div>
+        </div>
+        <div class="feat">
+          <div class="ft">✓ 审批入库 & 导出</div>
+          <div class="fd">审批通过后写入主表（只改不删）；可导出查询结果或变更明细为 Excel。</div>
+        </div>
+      </div>
+      <div class="legend-inline">
+        <span><i style="background:#fff3c4"></i>修改行（黄底）</span>
+        <span><i style="background:#d6f5e3"></i>新增行（绿底）</span>
+        <span><i style="background:rgba(224,142,11,.28)"></i>字段有变化的单元格（深黄）</span>
+      </div>
+    </div>
+
+    <div class="help-sec">
+      <h3><span class="n">3</span>完整演示步骤</h3>
+      <div class="steps-demo">
+        <div class="sd"><div class="num"></div><div class="c"><b>进入首页</b>：顶部有「📖 使用说明」按钮，可随时回到本页；两个入口卡片进入查询或更新。</div></div>
+        <div class="sd"><div class="num"></div><div class="c"><b>价格查询</b>：点「价格查询」→ 在「ETD（开船日）」填一个日期，如 <b>2026-11-05</b> → 点「查询报价」。观察：鹿特丹、汉堡等有效期覆盖该日的报价显示；德班（有效期从 11-10 起）被过滤；奥克兰（有效期为空）保留并标「有效期缺失」。</div></div>
+        <div class="sd"><div class="num"></div><div class="c"><b>组合筛选</b>：目的港填「鹿特丹」、船公司选「MAERSK」、箱型选「40HQ」，点查询，结果收窄。</div></div>
+        <div class="sd"><div class="num"></div><div class="c"><b>导出查询结果</b>：点右上「📥 导出 Excel」，得到当前结果的 18 列明细表。</div></div>
+        <div class="sd"><div class="num"></div><div class="c"><b>更新报价 · 上传</b>：回首页 →「更新报价」→ 点击上传区，选择本机报价文件，等待状态变为「✓ 已上传」→ 点「✨ 提取报价」。</div></div>
+        <div class="sd"><div class="num"></div><div class="c"><b>校对</b>：提取结果表格中直接修改任意单元格（如把某条 20GP 价格改掉）；观察空格黄色待补充；有效期缺失行「校验」列有灰标。可点「＋ 新增一行」或「移出」某行（仅影响本次提交）。</div></div>
+        <div class="sd"><div class="num"></div><div class="c"><b>提交审批</b>：点「提交审批 →」。缺失有效期需先补齐；核对原件后进入差异比对页。</div></div>
+        <div class="sd"><div class="num"></div><div class="c"><b>看差异</b>：修改行黄底、变化单元格深黄（鼠标悬停看原值）；新增行绿底；顶部汇总显示修改/新增条数。可勾「只看变更行」，可「导出变更明细」。</div></div>
+        <div class="sd"><div class="num"></div><div class="c"><b>审批入库</b>：点「✓ 审批通过并入库」，自动跳回查询页。对比入库前后：总条数只增不减，验证「主表不删除」。</div></div>
+      </div>
+      <div class="tip-box">建议演示顺序按 2→9 走一遍，约 3 分钟，可完整体现查询、提取、校对、差异、入库、导出全流程。</div>
+    </div>
+
+    <div class="help-sec">
+      <h3><span class="n">4</span>关键业务规则</h3>
+      <table class="rule-table">
+        <tr><th style="width:130px">规则</th><th>说明</th></tr>
+        <tr><td>唯一键</td><td>按港口、船公司、价格来源、服务、币种及有效期比对，防止不同报价相互覆盖。</td></tr>
+        <tr><td>ETD 校验</td><td>查询时输入开船日，只返回 <b>有效期起 ≤ ETD ≤ 有效期止</b> 的报价；与船期（周几）无关。</td></tr>
+        <tr><td>有效期缺失</td><td>有效期起/止为空的报价可以保存校对，补齐后才能提交审批发布。</td></tr>
+        <tr><td>主表变更</td><td>审批入库只做「修改」与「新增」，<b>永不删除</b>已有报价。</td></tr>
+        <tr><td>船期</td><td>模板「船期」列填周几文字（如 周三 / 周一/周四 / 周班），不参与查询过滤。</td></tr>
+        <tr><td>导出格式</td><td>查询条件全空时按原模板导出全部报价；填写条件时在一个工作表导出匹配结果，保留原报价表18列。</td></tr>
+      </table>
+    </div>
+
+    <div class="help-sec">
+      <h3><span class="n">5</span>使用说明</h3>
+      <ul class="limit-list">
+        <li>Excel固定模板在本机解析；其他表格、PDF及图片可使用DeepSeek提取，结果必须人工校对。</li>
+        <li>按当前授权，AI仅允许虚构或已脱敏样本，真实报价暂不外发。系统会在发送前确认。</li>
+        <li>报价、原件、校对及审批记录保存在主机。刷新页面后可在历史上传中继续处理。</li>
+        <li>管理员可以审批；业务人员提交后等待管理员审批。缺少有效期或有冲突时须先修正。</li>
+      </ul>
+    </div>
+
+    <div class="help-sec">
+      <h3><span class="n">6</span>日常维护</h3>
+      <ol><li>管理员在下方“基础资料”维护港口、船公司和报价来源。</li><li>定期进入“账号与备份”创建并下载完整备份，包含数据库与原件。</li><li>报价适用性不代表实际舱位确认，订舱前仍需向报价来源核实。</li></ol>
+    </div>
+    <div class="help-sec"><h3>账号与基础资料</h3><button class="btn-ghost" onclick="parent.postMessage({type:'quotation-settings'},location.origin)">账号与备份</button> <button class="btn-ghost" onclick="parent.postMessage({type:'quotation-catalog'},location.origin)">基础资料</button></div>
+  </div>
+</div>
+
+<!-- ============ 价格查询 ============ -->
+<div id="view-query" class="view">
+  <div class="page">
+    <div class="page-head">
+      <span class="back-link" onclick="go('home')">← 返回首页</span>
+      <h2>🔍 价格查询</h2>
+      <div class="spacer"></div>
+      <button class="btn-ghost" onclick="resetQuery()">重置</button>
+      <button class="btn-primary" onclick="exportExcel(currentQueryRows, '报价查询结果')">📥 导出 Excel</button>
+    </div>
+
+    <div class="filters">
+      <div class="field">
+        <label>起运港</label>
+        <input id="q-origin" value="青岛港" placeholder="起运港">
+      </div>
+      <div class="field">
+        <label>目的港（中/英文）</label>
+        <input id="q-dest" placeholder="如 鹿特丹 / ROTTERDAM">
+      </div>
+      <div class="field">
+        <label>船公司</label>
+        <select id="q-carrier"><option value="">全部</option></select>
+      </div>
+      <div class="field">
+        <label>箱量箱型</label>
+        <select id="q-ctype">
+          <option value="">全部</option>
+          <option value="20GP">20GP</option>
+          <option value="40GP">40GP</option>
+          <option value="40HQ">40HQ</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>ETD（开船日）</label>
+        <input id="q-etd" type="date">
+      </div>
+      <div class="actions">
+        <button class="btn-primary" onclick="runQuery()">🔍 查询报价</button>
+      </div>
+    </div>
+
+    <div class="statbar" id="q-stat"></div>
+
+    <div class="tablewrap">
+      <table class="grid" id="q-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 更新报价 ============ -->
+<div id="view-update" class="view">
+  <div class="page">
+    <div class="page-head">
+      <span class="back-link" onclick="go('home')">← 返回首页</span>
+      <h2>📤 更新报价</h2>
+      <div class="spacer"></div>
+      <span id="update-tip" style="font-size:12.5px;color:var(--muted)"></span>
+    </div>
+
+    <div class="steps">
+      <div class="step on" id="step1"><div class="num">1</div><div><div class="t">上传报价资料</div><div class="d">PDF / Excel / 图片</div></div></div>
+      <div class="step" id="step2"><div class="num">2</div><div><div class="t">提取报价并校对</div><div class="d">单元格可直接编辑</div></div></div>
+      <div class="step" id="step3"><div class="num">3</div><div><div class="t">审批入库</div><div class="d">差异高亮 · 导出</div></div></div>
+    </div>
+
+    <div id="pane-upload">
+      <div class="dropzone" id="dropzone" onclick="chooseFiles()">
+        <div class="ic">📁</div>
+        <h4>点击或拖拽文件到此处上传</h4>
+        <p>支持 PDF、Excel、图片</p>
+      </div>
+      <div class="filelist" id="filelist"></div>
+      <div class="toolbar" style="margin-top:18px;justify-content:flex-end">
+        <button class="btn-primary" id="btn-extract" onclick="extractQuotes()" disabled>✨ 提取报价</button>
+      </div>
+    </div>
+
+    <div id="pane-edit" style="display:none">
+      <div class="toolbar">
+        <span style="font-size:13px;color:var(--muted)">
+          提取结果可逐格编辑；<span style="background:#fff8e1;padding:1px 6px;border-radius:4px;border:1px solid #f0d38a">黄色</span> 为待补充字段。
+          删除按钮仅移除本次待提交的行，不会删除主表已有报价。
+          <span class="tag tag-miss" style="margin-left:4px">有效期缺失</span> 表示该行有效期起/止未填全。
+        </span>
+        <div class="spacer"></div>
+        <button class="btn-ghost" onclick="reextractQuotes()">重新提取</button>
+        <button class="btn-ghost" onclick="addRow()">＋ 新增一行</button>
+        <button class="btn-primary" onclick="goStep3()">提交审批 →</button>
+      </div>
+      <div class="tablewrap" style="max-height:calc(100vh - 360px)">
+        <table class="grid" id="edit-table" style="min-width:1900px">
+          <thead></thead><tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="pane-diff" style="display:none">
+      <div class="diff-summary" id="diff-summary"></div>
+      <div class="toolbar">
+        <label class="chk"><input type="checkbox" id="chk-only-diff" onchange="renderDiff()"> 只看变更行</label>
+        <div class="spacer"></div>
+        <button class="btn-ghost" onclick="goStep2()">← 返回校对</button>
+        <button class="btn-ghost" onclick="exportExcel(diffRows, '报价变更明细')">📥 导出变更明细</button>
+        <button class="btn-ok" onclick="approveCommit()">✓ 审批通过并入库</button>
+      </div>
+      <div class="tablewrap" style="max-height:calc(100vh - 400px)">
+        <table class="grid" id="diff-table" style="min-width:1900px">
+          <thead></thead><tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<input id="file-input" type="file" accept=".xlsx,.pdf,.jpg,.jpeg,.png" multiple hidden>
+<script src="/quotation-app.js"></script>
+</body>
+</html>

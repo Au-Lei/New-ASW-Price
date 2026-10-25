@@ -1,0 +1,16 @@
+{
+  "live_ai": true,
+  "data_scope": "synthetic only",
+  "checks": [
+    "real login and first-password change",
+    "fixed Excel real HTTP upload and background extraction",
+    "live AI multi-page shared heading/footnotes, two chunks, document instruction cannot approve",
+    "human correction, approval, repeated approval idempotency and exact subtotal",
+    "revision diff, current-only search, history and full export across pagination",
+    "10 concurrent HTTP readers, 30 consistent queries",
+    "AI raw preview unchanged after human correction and publication",
+    "complete ZIP backup download",
+    "CLI restore into empty directory; independent restarted HTTP login, prices, history, originals and AI evidence"
+  ],
+  "status": "passed"
+}

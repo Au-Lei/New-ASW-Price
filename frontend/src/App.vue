@@ -1,0 +1,18 @@
+<script setup>
+import {ref,onMounted,onUnmounted} from 'vue'
+import Account from './Account.vue'
+import Catalog from './Catalog.vue'
+import {api,post,setSession} from './quotationApi'
+const user=ref(null),ready=ref(false),username=ref(''),password=ref(''),error=ref(''),busy=ref(false),page=ref('app'),frame=ref(null)
+function expired(){user.value=null;setSession(null);page.value='app'}
+async function login(){busy.value=true;error.value='';try{const result=await post('/api/auth/login',{username:username.value,password:password.value});setSession(result);user.value=result.user;password.value='';page.value=result.user.must_change_password?'account':'app'}catch(e){error.value=e.message}finally{busy.value=false}}
+async function logout(){try{await post('/api/auth/logout',{})}finally{expired()}}
+function message(event){if(event.origin!==location.origin||event.source!==frame.value?.contentWindow)return;if(event.data?.type==='quotation-session-expired')expired();if(event.data?.type==='quotation-settings')page.value='account';if(event.data?.type==='quotation-catalog'&&user.value?.role==='admin')page.value='catalog'}
+onMounted(async()=>{window.addEventListener('asw-session-expired',expired);window.addEventListener('message',message);try{const result=await api('/api/auth/me');setSession(result);user.value=result.user;if(user.value.must_change_password)page.value='account'}catch{}finally{ready.value=true}})
+onUnmounted(()=>{window.removeEventListener('asw-session-expired',expired);window.removeEventListener('message',message)})
+</script>
+<template>
+<iframe v-if="ready&&user&&!user.must_change_password&&page==='app'" ref="frame" src="/quotation.html?v=original-1" class="original-app" title="青岛港国际海运报价管理系统"></iframe>
+<template v-else><header class="auth-header"><span>⚓</span><div><h1>青岛港国际海运报价管理系统</h1><p>Qingdao Ocean Freight Quotation</p></div></header><main v-if="!ready">正在加载…</main><main v-else-if="!user" class="auth-main"><form class="auth-card" @submit.prevent="login"><h2>登录报价系统</h2><label>账号<input v-model="username" autocomplete="username" required></label><label>密码<input v-model="password" type="password" autocomplete="current-password" required></label><p v-if="error" class="feedback error" role="alert">{{error}}</p><button class="small-button primary" :disabled="busy">{{busy?'登录中…':'登录'}}</button></form></main><main v-else><div class="form-actions"><button v-if="!user.must_change_password" class="small-button" @click="page='app'">← 返回首页</button><button v-if="user.role==='admin'&&!user.must_change_password" class="small-button" @click="page=page==='catalog'?'account':'catalog'">{{page==='catalog'?'账号与备份':'基础资料'}}</button><button class="small-button" @click="logout">退出登录</button></div><Catalog v-if="page==='catalog'&&user.role==='admin'"/><Account v-else :user="user" @password-changed="expired"/></main></template>
+</template>
+<style scoped>.original-app{display:block;width:100%;height:100dvh;border:0;background:#f7f5ef}.auth-header{background:linear-gradient(135deg,#0b2545,#13315c);padding:14px 28px;gap:14px}.auth-header>span{display:grid;place-items:center;width:38px;height:38px;background:#1b6ca8;border-radius:10px;font-size:20px}.auth-header h1{font-size:17px}.auth-header p{margin-top:2px;color:#9fc2e0;opacity:1}.auth-main{display:grid;place-items:center;min-height:70vh}.auth-card{width:min(390px,100%);padding:32px;background:white;border:1px solid #d7e3ee;border-radius:14px}.auth-card h2{font-size:22px;margin:0 0 24px}.auth-card label{display:grid;gap:8px;margin:16px 0;font-size:14px}.auth-card input{font:inherit;padding:11px;border:1px solid #d7e3ee;border-radius:8px}.auth-card button{width:100%;margin-top:10px;background:#1b6ca8}</style>
