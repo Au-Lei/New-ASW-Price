@@ -335,3 +335,30 @@ def test_ai_remark_xlsx_header_same_column(env):
             db.row_factory=__import__('sqlite3').Row
             row=ai.normalize_quote(db,ai.Quote.model_validate(q),doc,{'worksheet':'Rates','rows':[2,2]})
         assert row['data']['remark']==expected
+
+@pytest.mark.parametrize('excerpt',['ROTTERDAM | 1000 | 1900','Port: ROTTERDAM, 20GP: 1000, 40HQ: 1900','unrelated model paraphrase'])
+def test_workbook_excerpt_mismatch_uses_actual_cells(env,excerpt):
+    c,path,settings,worker=env
+    q={'facts':{'destination_port':'ROTTERDAM','carrier':'Invented carrier'},'prices':{'20GP':'1000','40HQ':'1900'},
+       'sources':[{'id':'r','worksheet':'Rates','cell_range':'A2:C2','excerpt':excerpt}],
+       'field_sources':{'destination_port':['r'],'carrier':['r'],'prices.20GP':['r'],'prices.40HQ':['r']}}
+    doc=ai.Document('xlsx',[],{'Rates':{'cells':{'A2':'ROTTERDAM','B2':'1000','C2':'1900'},'formulas':set()}},{},'')
+    with connect(path) as db:
+        db.row_factory=__import__('sqlite3').Row
+        row=ai.normalize_quote(db,ai.Quote.model_validate(q),doc,{'worksheet':'Rates','rows':[2,2]})
+    assert row['data']['destination_port_id']
+    assert row['data']['carrier_id']==''
+    assert row['data']['prices']=={'20GP':'1000.00','40GP':'1900.00','40HQ':'1900.00'}
+    assert row['sources'][0]['excerpt']=='ROTTERDAM 1000 1900'
+    assert row['raw']['sources'][0]['excerpt']==excerpt
+
+
+def test_workbook_wrong_amount_and_empty_range_not_accepted(env):
+    c,path,settings,worker=env
+    doc=ai.Document('xlsx',[],{'Rates':{'cells':{'A2':'ROTTERDAM','B2':'11000'},'formulas':set()}},{},'')
+    q={'facts':{'destination_port':'ROTTERDAM'},'prices':{'20GP':'1000'},'sources':[{'id':'r','worksheet':'Rates','cell_range':'A2:B2','excerpt':'ROTTERDAM 1000'}],'field_sources':{'destination_port':['r'],'prices.20GP':['r']}}
+    with connect(path) as db:
+        db.row_factory=__import__('sqlite3').Row
+        row=ai.normalize_quote(db,ai.Quote.model_validate(q),doc,{'worksheet':'Rates','rows':[2,2]})
+    assert row['data']['prices']=={}
+    with pytest.raises(ai.AIError):ai.source_text(ai.Source(id='r',worksheet='Rates',cell_range='A3:B3',excerpt='made up'),doc,{'worksheet':'Rates','rows':[3,3]},True)

@@ -27,7 +27,7 @@ from .quote_enrichment import validity_range,equal_40,reference_ports,enrich_por
 
 ENDPOINT='https://api.deepseek.com/chat/completions'
 MODEL='deepseek-flash'
-PROMPT_VERSION='shipping-extract-8-explicit-remarks'
+PROMPT_VERSION='shipping-extract-9-workbook-evidence'
 FACTS=('origin_port','origin_country','origin_terminal','destination_port','destination_country','destination_terminal','carrier','supplier','source_series','route','service_key','service_kind','path_text','fee_basis','currency','sailing','transit_days','remark','valid_from','valid_to','validity_basis','validity_original','included_fees','extra_fees','unknown_fees','conditions')
 EXTRACTION_RULES=(__import__('pathlib').Path(__file__).parent/'prompts/shipping_rules.txt').read_text(encoding='utf-8')
 class AIError(Exception):
@@ -208,13 +208,23 @@ def source_text(source,document,part,primary=False):
                 if address in sheet['formulas']:raise AIError('AI_FORMULA_SOURCE','AI引用了公式单元格，请改为明确的静态报价后重传')
                 if sheet['cells'].get(address):values.append(sheet['cells'][address])
         text=' '.join(values)
-        if not compact(source.excerpt) or compact(source.excerpt) not in compact(text):raise AIError('AI_SOURCE_INVALID','AI证据片段与对应单元格原文不符，请对照原件核对')
+        if not text.strip():raise AIError('AI_SOURCE_INVALID','AI引用的单元格范围为空，请核对来源位置后重试')
+        # The workbook range is authoritative; model paraphrases are never evidence.
+        # Validate each extracted field against this actual text below instead of
+        # rejecting every row because the model changed an excerpt delimiter.
         return text,True
     if source.worksheet is not None or source.cell_range is not None or source.page not in (document.texts if document.kind=='pdf' else {1:''}):raise AIError('AI_SOURCE_INVALID','AI返回的页码或图片位置无效')
     if primary and source.page not in part['pages']:raise AIError('AI_SOURCE_INVALID','AI主报价行超出当前处理页面')
     text=document.texts.get(source.page,'')
     verified=bool(text and compact(source.excerpt) in compact(text))
     return source.excerpt,verified
+
+def evidence_contains(raw,text):
+    value=compact(raw);source=compact(text)
+    if re.fullmatch(r'\d+(?:[,.]\d+)*',value):
+        numbers=re.findall(r'(?<![\d.,])\d+(?:,\d{3})*(?:\.\d+)?(?![\d.,])',unicodedata.normalize('NFKC',str(text)))
+        return any(Decimal(n.replace(',',''))==Decimal(value.replace(',','')) for n in numbers)
+    return bool(value) and value in source
 
 def number(text):
     text=unicodedata.normalize('NFKC',str(text)).strip()
@@ -265,12 +275,15 @@ def remark_supported(quote,document,source_map,raw):
 
 def normalize_quote(db,quote,document,part,destination_override=None):
     notes=list(quote.uncertainties);lookup=dictionaries(db);facts={};source_map={}
-    for i,s in enumerate(quote.sources):source_map[s.id]=source_text(s,document,part,i==0)
+    for i,s in enumerate(quote.sources):
+        source_map[s.id]=source_text(s,document,part,i==0)
+        if document.kind=='xlsx' and compact(s.excerpt) not in compact(source_map[s.id][0]):
+            notes.append(f'{s.worksheet} {s.cell_range}的AI摘录与原文格式不一致，已按实际单元格逐字段核对')
     for k,raw in quote.facts.items():
         if raw is None or not raw.strip():continue
         refs=quote.field_sources.get(k,[])
-        if not refs and k!='currency':refs=[sid for sid,value in source_map.items() if compact(raw) in compact(value[0])]
-        if not refs or not any(compact(raw) in compact(source_map[r][0]) for r in refs):notes.append(f'{k}缺少对应原文证据，已留空待校对');continue
+        if not refs and k!='currency':refs=[sid for sid,value in source_map.items() if evidence_contains(raw,value[0])]
+        if not refs or not any(evidence_contains(raw,source_map[r][0]) for r in refs):notes.append(f'{k}缺少对应原文证据，已留空待校对');continue
         if k=='remark' and not remark_supported(quote,document,source_map,raw):
             notes.append('原文未提供明确的备注／注意事项字段，业务备注留空；识别内容保留在原始证据中')
             continue
@@ -285,7 +298,7 @@ def normalize_quote(db,quote,document,part,destination_override=None):
     for box,raw in quote.prices.items():
         if raw is None or not raw.strip():continue
         refs=quote.field_sources.get('prices.'+box,[]);value=number(raw)
-        supported=any(compact(raw) in compact(source_map[r][0]) for r in refs)
+        supported=any(evidence_contains(raw,source_map[r][0]) for r in refs)
         if not refs or not supported or not value:notes.append(f'{box}价格格式或原文证据不明确，未填入箱价');continue
         prices[box]=value
     prices,price_notes=equal_40(prices)
@@ -356,7 +369,7 @@ def normalize_quote(db,quote,document,part,destination_override=None):
     try:data=Draft.model_validate(data).model_dump()
     except ValidationError as exc:raise AIError('AI_SCHEMA_INVALID','AI字段长度或类型超出系统限制，请拆分资料后重试') from exc
     issues,_=validation(db,data)
-    return {'id':uuid4().hex,'data':data,'display':decorate(data,lookup),'raw':{**quote.model_dump(),'enrichment':geo},'issues':issues,'mapping_notes':notes,'importable':True,'sources':[s.model_dump() for s in quote.sources]}
+    return {'id':uuid4().hex,'data':data,'display':decorate(data,lookup),'raw':{**quote.model_dump(),'enrichment':geo},'issues':issues,'mapping_notes':notes,'importable':True,'sources':[{**s.model_dump(),'excerpt':source_map[s.id][0]} if document.kind=='xlsx' else s.model_dump() for s in quote.sources]}
 
 def call_deepseek(settings,body):
     # Explicit official endpoint only; no redirects, proxy inheritance or document URLs.
