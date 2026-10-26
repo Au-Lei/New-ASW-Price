@@ -15,6 +15,8 @@ for folder in ('frontend/src','frontend/public','frontend/tests'):
     allowed.extend(p for p in (ROOT/folder).rglob('*') if p.is_file())
 allowed.extend(p for p in (ROOT/'frontend/dist').rglob('*') if p.is_file())
 allowed.append(ROOT/'backend/assets/quotation-template.xlsx')
+# Synthetic BIFF8 fixtures are needed by the shipped regression tests.
+allowed.extend((ROOT/'backend/tests/fixtures').glob('legacy-*.xls'))
 manifest={}
 for p in sorted(set(allowed)):
     if not p.is_file() or p.is_symlink():raise SystemExit('Missing or unsafe release entry: '+str(p.relative_to(ROOT)))

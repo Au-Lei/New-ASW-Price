@@ -22,11 +22,12 @@ from .excel_format import read_xlsx, column, column_number
 from .quotation import Draft, BOXES, CURRENCIES, validation, decorate, dictionaries
 from .catalog_import import normalize
 from .review import dump
+from .remark_rules import labelled
 from .quote_enrichment import validity_range,equal_40,reference_ports,enrich_port,canonical_country,expand_destination
 
 ENDPOINT='https://api.deepseek.com/chat/completions'
 MODEL='deepseek-flash'
-PROMPT_VERSION='shipping-extract-7-no-coordinate-loss'
+PROMPT_VERSION='shipping-extract-8-explicit-remarks'
 FACTS=('origin_port','origin_country','origin_terminal','destination_port','destination_country','destination_terminal','carrier','supplier','source_series','route','service_key','service_kind','path_text','fee_basis','currency','sailing','transit_days','remark','valid_from','valid_to','validity_basis','validity_original','included_fees','extra_fees','unknown_fees','conditions')
 EXTRACTION_RULES=(__import__('pathlib').Path(__file__).parent/'prompts/shipping_rules.txt').read_text(encoding='utf-8')
 class AIError(Exception):
@@ -243,6 +244,25 @@ def normalize_extracted_quotes(db,quotes,document,part):
  return rows
 
 
+def remark_supported(quote,document,source_map,raw):
+    refs=quote.field_sources.get('remark',[])
+    sources=[s for s in quote.sources if s.id in refs]
+    if any(labelled(source_map[s.id][0]) for s in sources):return True
+    if document.kind!='xlsx':return False
+    # Data-only excerpts are permitted if the same column has an explicit header.
+    for source in sources:
+        cells=document.sheets[source.worksheet]['cells']
+        bounds=re.fullmatch(r'([A-Z]+)([0-9]+)(?::([A-Z]+)([0-9]+))?',source.cell_range)
+        left,top,right,bottom=bounds.groups();right=right or left;bottom=int(bottom or top)
+        for address,value in cells.items():
+            match=re.fullmatch(r'([A-Z]+)([0-9]+)',address)
+            if not match or compact(raw) not in compact(value):continue
+            col,row=match.groups();row=int(row)
+            if not (int(top)<=row<=bottom and column_number(left)<=column_number(col)<=column_number(right)):continue
+            if any(labelled(cells.get(f'{col}{r}','')) for r in range(1,row)):return True
+    return False
+
+
 def normalize_quote(db,quote,document,part,destination_override=None):
     notes=list(quote.uncertainties);lookup=dictionaries(db);facts={};source_map={}
     for i,s in enumerate(quote.sources):source_map[s.id]=source_text(s,document,part,i==0)
@@ -251,6 +271,9 @@ def normalize_quote(db,quote,document,part,destination_override=None):
         refs=quote.field_sources.get(k,[])
         if not refs and k!='currency':refs=[sid for sid,value in source_map.items() if compact(raw) in compact(value[0])]
         if not refs or not any(compact(raw) in compact(source_map[r][0]) for r in refs):notes.append(f'{k}缺少对应原文证据，已留空待校对');continue
+        if k=='remark' and not remark_supported(quote,document,source_map,raw):
+            notes.append('原文未提供明确的备注／注意事项字段，业务备注留空；识别内容保留在原始证据中')
+            continue
         facts[k]=raw.strip()
     if destination_override:facts['destination_port']=destination_override
     if facts.get('destination_country'):facts['destination_country']=canonical_country(db,facts['destination_country'])

@@ -1,0 +1,33 @@
+import {test,expect} from '@playwright/test'
+
+test('query keeps country and port names visible while scrolling and resizing',async({page})=>{
+ await page.setViewportSize({width:1440,height:1000})
+ await page.goto('http://127.0.0.1:8004/')
+ await page.getByLabel('账号',{exact:true}).fill('admin')
+ await page.getByLabel('密码',{exact:true}).fill('Isolated-test-password-2026!')
+ await page.getByRole('button',{name:'登录',exact:true}).click()
+ const app=page.frameLocator('iframe')
+ await expect(app.locator('#view-home')).toBeVisible()
+ await app.locator('#view-home .entry').first().click()
+ await expect(app.locator('#q-table tbody')).toContainText('鹿特丹')
+ const table=app.locator('#q-table')
+ const rects=()=>table.evaluate(t=>Array.from(t.tHead.rows[0].cells).slice(0,6).map(c=>({left:c.getBoundingClientRect().left,width:c.getBoundingClientRect().width})))
+ const before=await rects()
+ await table.evaluate(t=>{t.parentElement.scrollLeft=700})
+ await expect.poll(()=>table.evaluate(t=>t.parentElement.scrollLeft)).toBeGreaterThan(300)
+ const after=await rects()
+ for(let i=0;i<5;i++)expect(Math.abs(after[i].left-before[i].left)).toBeLessThan(2)
+ expect(after[5].left).toBeLessThan(before[5].left-300)
+ for(let i=1;i<5;i++)expect(Math.abs(after[i].left-(after[i-1].left+after[i-1].width))).toBeLessThan(2)
+ const rowLeft=await table.locator('tbody tr').first().evaluate(r=>Array.from(r.cells).slice(0,5).map(c=>c.getBoundingClientRect().left))
+ for(let i=0;i<5;i++)expect(Math.abs(rowLeft[i]-after[i].left)).toBeLessThan(2)
+ await page.setViewportSize({width:1200,height:850})
+ await expect.poll(async()=>{
+  const a=await rects();return Math.max(...a.slice(1,5).map((r,i)=>Math.abs(r.left-(a[i].left+a[i].width))))
+ }).toBeLessThan(2)
+ // Duplicate only DOM rows to exercise vertical sticky headers with a long result view.
+ await table.evaluate(t=>{for(let i=0;i<30;i++)t.tBodies[0].append(t.tBodies[0].rows[0].cloneNode(true));t.parentElement.scrollTop=300})
+ const top=await table.evaluate(t=>({head:t.tHead.getBoundingClientRect().top,cell:t.tHead.rows[0].cells[1].getBoundingClientRect().top,wrap:t.parentElement.getBoundingClientRect().top}))
+ expect(Math.abs(top.cell-top.wrap)).toBeLessThan(3)
+ await page.screenshot({path:'/tmp/asw-query-frozen-proof.png',fullPage:true})
+})

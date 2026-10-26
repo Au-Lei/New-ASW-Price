@@ -19,11 +19,28 @@ const COLS = [
   {k:'feeBasis',   t:'费用口径'}
 ];
 
+let queryFreezeObserver;
+function updateQueryFrozenOffsets(){
+  const table=document.getElementById('q-table');
+  let left=0;
+  table.querySelectorAll('thead th').forEach((cell,index)=>{
+    if(index<5){table.style.setProperty(`--q-frozen-${index}`,`${left}px`);left+=cell.getBoundingClientRect().width;}
+  });
+}
+
 function renderQuery(rows, etd){
+  const groups=new Map();
+  rows.forEach((row,index)=>{
+    const d=row._data||{};
+    const key=d.destination_port_id?JSON.stringify([d.origin_port_id,d.destination_port_id,d.route_id,row.line,row.countryEn,row.countryCn,row.portEn,row.portCn]):`unknown-${index}`;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(row);
+  });
+  rows=Array.from(groups.values()).flatMap(group=>group.map((r,i)=>({...r,_portGroupStart:i===0,_portGroupSize:group.length})));
   const thead=document.querySelector('#q-table thead');
   const tbody=document.querySelector('#q-table tbody');
   thead.innerHTML='<tr>'+COLS.map((c,i)=>{
-    let cls=i===0?'frz1':(i===1?'frz2':'');
+    let cls=i<5?`q-frozen q-frozen-${i}`:'';
     return `<th class="${cls}">${c.t}</th>`;
   }).join('')+'</tr>';
 
@@ -33,7 +50,8 @@ function renderQuery(rows, etd){
     tbody.innerHTML=rows.map(r=>{
       const vs=validStatus(r);
       return '<tr>'+COLS.map((c,i)=>{
-        let cls=i===0?'frz1':(i===1?'frz2':'');
+        if(i>=1&&i<=4&&!r._portGroupStart)return '';
+        let cls=i<5?`q-frozen q-frozen-${i}`:'';
         let val=r[c.k];
         let content=esc(val);
         if(c.num) content = (val!==''&&val!==null&&val!==undefined)?`<span class="price">${val}</span>`:'<span class="price-empty">—</span>';
@@ -41,7 +59,7 @@ function renderQuery(rows, etd){
         if(c.k==='validTo'){
           content = esc(val)+` <span class="tag ${vs.cls}">${vs.txt}</span>`;
         }
-        return `<td class="${cls}">${content}</td>`;
+        return `<td class="${cls}"${i>=1&&i<=4?` rowspan="${r._portGroupSize}"`:""}>${content}</td>`;
       }).join('')+'</tr>';
     }).join('');
   }
@@ -63,6 +81,8 @@ function renderQuery(rows, etd){
     statHtml+=`<div class="stat" style="border-color:var(--sea2)">ETD <b>${esc(etd)}</b> · 仅校验是否在有效期内</div>`;
   }
   stat.innerHTML=statHtml;
+  updateQueryFrozenOffsets();
+  if(!queryFreezeObserver){queryFreezeObserver=new ResizeObserver(updateQueryFrozenOffsets);queryFreezeObserver.observe(document.getElementById('q-table'));}
 }
 
 

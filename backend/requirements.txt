@@ -69,3 +69,5 @@ typing-inspection==0.4.4
     #   pydantic
 uvicorn==0.54.0
     # via -r backend/requirements.in
+xlrd==2.0.2
+    # via -r backend/requirements.in

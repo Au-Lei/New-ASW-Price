@@ -190,6 +190,17 @@ tr.row-add .frz1,tr.row-add .frz2{background:var(--add) !important}
   .step:not(:last-child)::after{display:none}
 }
 </style>
+<style id="query-frozen-columns">
+#q-table .q-frozen{position:sticky;z-index:3;background:#fff}
+#q-table thead .q-frozen{z-index:7;background:var(--navy2)}
+#q-table .q-frozen-0{left:var(--q-frozen-0,0px)}
+#q-table .q-frozen-1{left:var(--q-frozen-1,120px)}
+#q-table .q-frozen-2{left:var(--q-frozen-2,240px)}
+#q-table .q-frozen-3{left:var(--q-frozen-3,360px)}
+#q-table .q-frozen-4{left:var(--q-frozen-4,480px);box-shadow:2px 0 0 var(--line)}
+#q-table tbody tr:nth-child(even) .q-frozen{background:#fafcfe}
+#q-table tbody tr:hover .q-frozen{background:var(--foam)}
+</style>
 </head>
 <body>
 
@@ -458,7 +469,7 @@ tr.row-add .frz1,tr.row-add .frz2{background:var(--add) !important}
 
 <div id="toast"></div>
 
-<input id="file-input" type="file" accept=".xlsx,.pdf,.jpg,.jpeg,.png" multiple hidden>
+<input id="file-input" type="file" accept=".xls,.xsl,.xlsx,.pdf,.jpg,.jpeg,.png" multiple hidden>
 <script src="/quotation-app.js"></script>
 </body>
 </html>

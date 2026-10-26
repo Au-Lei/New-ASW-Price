@@ -140,7 +140,8 @@ def test_long_image_splits_adaptively_and_does_not_repeat_context_rows(env,monke
     def provider(settings,body):
         context=json.loads(body['messages'][1]['content'][0]['text'].split('\n',1)[1])
         calls.append(context['current']['row_center_y_range'])
-        if len(calls)==1:return response(finish='length')
+        # Workers may start in any order; truncate the intended top segment.
+        if context['current']['row_center_y_range']==[0,.25]:return response(finish='length')
         quotes=[]
         for center in (.10,.30,.60,.90):
             q=quote();q['sources'][0]['region']=[.1,center-.01,.8,.02]
@@ -310,3 +311,27 @@ def test_cached_rebuild_restores_missing_rows_without_ai_or_publication(env,monk
     assert rebuild(path,t['id'],True)['already_rebuilt']
     assert len(c.get('/api/ai/imports/'+iid).json()['rows'])==1
     with connect(path) as db:assert db.execute('SELECT count(*) FROM quotes').fetchone()[0]==0
+
+@pytest.mark.parametrize('label',['备注：','注意事项：','Remarks:','Notes:',''])
+def test_remark_requires_explicit_label(env,label):
+    c,path,settings,worker=env
+    q=quote();q['facts']['remark']='仅限普货'
+    q['sources'].append({'id':'remark','page':1,'excerpt':label+'仅限普货'})
+    q['field_sources']['remark']=['remark']
+    q['uncertainties']=['AI识别疑问不能进入备注']
+    with connect(path) as db:
+        db.row_factory=__import__('sqlite3').Row
+        row=ai.normalize_quote(db,ai.Quote.model_validate(q),ai.Document('image',[],{},{},''),{'pages':[1]})
+    assert row['data']['remark']==('仅限普货' if label else '')
+    assert 'AI识别疑问不能进入备注' in row['mapping_notes']
+
+
+def test_ai_remark_xlsx_header_same_column(env):
+    c,path,settings,worker=env
+    q={'facts':{'remark':'仅限普货'},'sources':[{'id':'r','worksheet':'Rates','cell_range':'A2:B2','excerpt':'ROTTERDAM 仅限普货'}],'field_sources':{'remark':['r']}}
+    for heading,expected in [('备注','仅限普货'),('说明以外的数据','')]:
+        doc=ai.Document('xlsx',[],{'Rates':{'cells':{'A1':'POD','B1':heading,'A2':'ROTTERDAM','B2':'仅限普货'},'formulas':set()}},{},'')
+        with connect(path) as db:
+            db.row_factory=__import__('sqlite3').Row
+            row=ai.normalize_quote(db,ai.Quote.model_validate(q),doc,{'worksheet':'Rates','rows':[2,2]})
+        assert row['data']['remark']==expected

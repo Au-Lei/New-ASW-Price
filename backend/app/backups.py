@@ -18,7 +18,7 @@ from .auth import current_actor, event
 from .review import dump
 
 NAME=re.compile(r'backup-\d{8}T\d{6}-[a-f0-9]{8}\.zip')
-KEY=re.compile(r'[a-f0-9]{32}\.(xlsx|pdf|png|jpe?g)')
+KEY=re.compile(r'[a-f0-9]{32}\.(xlsx|xls|xsl|pdf|png|jpe?g)')
 def sha(path):
     value=hashlib.sha256()
     with path.open('rb') as stream:

@@ -18,6 +18,7 @@ from .database import connect
 from .excel_format import HEADERS, EXTRAS, MAX_FILE, column, column_number, read_xlsx, write_workbook
 from .quotation import Draft, Search, search_records, validation
 from .quote_enrichment import equal_40
+from .port_groups import port_key,grouped,merge_ranges
 
 
 class UnrecognizedTemplate(ValueError):
@@ -165,7 +166,7 @@ def export_sheets(result,search,generated):
             groups[name]={'name':name,'title':name+'内部海运成本报价表','headers':headers,
                           'metadata':[description,f'参考日期：{result["reference_date"]}；有效期范围：{"全部有效期" if search.date_scope=="all" else "参考日适用"}；含边界当日',
                                       f'生成时间：{generated}；共{result["total"]}条，按查询条件全量导出，不受分页影响',
-                                      '仅供内部使用；保留成本来源；海运费小计不含另计／待确认费用，报价不代表舱位确认'],'rows':[]}
+                                      '仅供内部使用；保留成本来源；海运费小计不含另计／待确认费用，报价不代表舱位确认'],'rows':[], 'port_groups':[]}
         price=lambda box:Decimal(item['prices'][box]) if box in item['prices'] else None
         row=[item['route'].get('name',''),item['country'].get('name_en',''),item['country'].get('name_cn',''),item['destination'].get('name_en',''),item['destination'].get('name_cn',''),item['carrier'].get('name',''),
              price('20GP'),price('40GP'),price('40HQ'),item['currency'],item.get('sailing',''),int(item['transit_days']) if item.get('transit_days') else None,item.get('path_text',''),
@@ -176,6 +177,10 @@ def export_sheets(result,search,generated):
             row += [search.quantities.get(box) for box in ('20GP','40GP','40HQ')]+[Decimal(item['subtotal']) if item['subtotal'] is not None else None,
                     '缺少所选箱型价格：'+','.join(item['missing_boxes']) if item['missing_boxes'] else item['subtotal_note']]
         groups[name]['rows'].append(row)
+        groups[name]['port_groups'].append(port_key(item))
+    for sheet in groups.values():
+        sheet['rows'],sheet['port_groups']=grouped(sheet['rows'],sheet['port_groups'])
+        sheet['merge_ranges']=merge_ranges(sheet['port_groups'],8)
     preferred=['美洲航线','欧洲航线','美加航线','亚洲航线','非洲航线','中东印巴航线']
     return sorted(groups.values(),key=lambda g:(preferred.index(g['name']) if g['name'] in preferred else 99,g['name']))
 
@@ -190,8 +195,10 @@ def export_content(sheets,result,search):
         return write_workbook(sheets)
     if search.export_layout=='simple':
         rows=[row[:len(HEADERS)] for sheet in sheets for row in sheet['rows']]
+        keys=[key for sheet in sheets for key in sheet['port_groups']]
+        rows,keys=grouped(rows,keys)
         return write_workbook([{'name':'查询报价','title':'海运报价查询结果','headers':HEADERS,
-                               'metadata':[f"共{result['total']}条报价；按查询条件导出",'内部报价；有效期及适用条件以原报价为准'], 'rows':rows}])
+                               'metadata':[f"共{result['total']}条报价；按查询条件导出",'内部报价；有效期及适用条件以原报价为准'], 'rows':rows,'merge_ranges':merge_ranges(keys,8)}])
     from .template_export import write_template
     return write_template(sheets)
 
@@ -243,7 +250,7 @@ def excel_router(database,settings):
             if old:return {**response_data(db,old['id']),'duplicate':True}
             parsed=parse_rows(db,content,options)
             identity,batch_id,file_id=uuid4().hex,uuid4().hex,uuid4().hex
-            storage=file_id+'.xlsx'
+            storage=file_id+('.xls' if content.startswith(b'\xd0\xcf\x11\xe0') else '.xlsx')
             uploads=settings.data_dir/'uploads';uploads.mkdir(parents=True,exist_ok=True)
             saved=uploads/storage
             try:
@@ -252,7 +259,7 @@ def excel_router(database,settings):
                 who=current_actor(db)
                 db.execute('INSERT INTO upload_batches(id,owner_id) VALUES (?,?)',(batch_id,who['id']))
                 db.execute('INSERT INTO uploaded_files(id,batch_id,original_name,storage_key,sha256,media_type,size_bytes) VALUES (?,?,?,?,?,?,?)',
-                           (file_id,batch_id,filename,storage,digest,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',len(content)))
+                           (file_id,batch_id,filename,storage,digest,'application/vnd.ms-excel' if storage.endswith('.xls') else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',len(content)))
                 db.execute('INSERT INTO excel_imports(id,batch_id,file_id,sha256,options_json,preview_json) VALUES (?,?,?,?,?,?)',
                            (identity,batch_id,file_id,digest,options.model_dump_json(),json.dumps({'filename':filename,**parsed},ensure_ascii=False)))
                 result=response_data(db,identity)
@@ -265,7 +272,7 @@ def excel_router(database,settings):
     @router.post('/imports/preview')
     async def preview(request:Request,filename:str=Query(...,min_length=1,max_length=255),options_json:str=Query('{}',max_length=3000)):
         filename=filename.replace('\\','/').split('/')[-1]
-        if not filename.lower().endswith('.xlsx'):raise HTTPException(422,'仅支持xlsx，请将xls另存为xlsx后导入')
+        if not filename.lower().endswith(('.xlsx','.xls','.xsl')):raise HTTPException(422,'仅支持xls或xlsx；xsl仅兼容误命名的Excel')
         try:options=ImportOptions.model_validate_json(options_json)
         except ValidationError:raise HTTPException(422,'导入补充条件格式不正确')
         content=bytearray()

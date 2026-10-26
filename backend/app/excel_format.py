@@ -33,10 +33,12 @@ def column_number(text):
 def read_xlsx(content,max_file=MAX_FILE):
     if len(content)>max_file:
         raise ValueError('Excel超过允许文件大小')
+    from .legacy_excel import OLE_MAGIC, read_xls
+    if content.startswith(OLE_MAGIC):return read_xls(content)
     try:
         z=ZipFile(BytesIO(content))
     except BadZipFile as exc:
-        raise ValueError('不是有效的xlsx文件；旧版xls或加密文件请另存为xlsx') from exc
+        raise ValueError('不是有效的Excel文件，内容损坏或并非xls/xlsx；请另存为未加密xlsx') from exc
     with z:
         entries=z.infolist()
         if len(entries)>2000 or sum(e.file_size for e in entries)>100*1024*1024:
@@ -176,20 +178,28 @@ def write_workbook(sheets):
             E.SubElement(content,'Override',PartName=f'/xl/worksheets/sheet{index}.xml',ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml')
             root=E.Element('worksheet',xmlns=MAIN)
             views=E.SubElement(root,'sheetViews');view=E.SubElement(views,'sheetView',workbookViewId='0',showGridLines='0')
-            E.SubElement(view,'pane',xSplit='2',ySplit='7',topLeftCell='C8',activePane='bottomRight',state='frozen')
-            E.SubElement(view,'selection',pane='bottomRight',activeCell='C8',sqref='C8')
+            frozen_columns=sheet['headers'].index('中文港口名')+1 if '中文港口名' in sheet['headers'] else 2
+            first_scroll_cell=f'{column(frozen_columns+1)}8'
+            E.SubElement(view,'pane',xSplit=str(frozen_columns),ySplit='7',topLeftCell=first_scroll_cell,activePane='bottomRight',state='frozen')
+            E.SubElement(view,'selection',pane='bottomRight',activeCell=first_scroll_cell,sqref=first_scroll_cell)
             E.SubElement(root,'sheetFormatPr',defaultRowHeight='22')
             columns=E.SubElement(root,'cols')
             for col,title in enumerate(sheet['headers'],1):
                 width=16 if title in ('20GP','40GP','40HQ','货币','有效期起','有效期止') else 32 if title in ('备注（注意事项）','途径路径','价格来源','适用条件','已含费用','另计费用','待确认费用','报价编号') else 22
                 E.SubElement(columns,'col',min=str(col),max=str(col),width=str(width),customWidth='1')
             data=E.SubElement(root,'sheetData')
+            covered=set()
+            for ref in sheet.get('merge_ranges',[]):
+                match=re.fullmatch(r'([B-E])(\d+):\1(\d+)',ref)
+                if not match:raise ValueError('港口合并范围无效')
+                col,start,end=match.groups()
+                covered.update(f'{col}{r}' for r in range(int(start)+1,int(end)+1))
             def add_row(number,values,style=0):
                 long=max((len(str(v)) for v in values if v is not None),default=0)
                 height=30 if number==1 else 36 if number==7 else min(150,max(30,((long+20)//22)*15)) if number>=8 else 26
                 row=E.SubElement(data,'row',r=str(number),ht=str(height),customHeight='1')
                 for col,value in enumerate(values,1):
-                    if value is None:continue
+                    if value is None or f'{column(col)}{number}' in covered:continue
                     cell=E.SubElement(row,'c',r=f'{column(col)}{number}',s=str(style))
                     if isinstance(value,(date,datetime)):
                         cell.set('s','4')
@@ -210,6 +220,8 @@ def write_workbook(sheets):
             # Metadata stays within the first 18 template columns for a readable opening view.
             last=column(min(18,len(sheet['headers'])))
             for rownum in range(1,6):E.SubElement(merges,'mergeCell',ref=f'A{rownum}:{last}{rownum}')
+            for ref in sheet.get('merge_ranges',[]):E.SubElement(merges,'mergeCell',ref=ref)
+            merges.set('count',str(len(merges)))
             E.SubElement(root,'pageMargins',left='0.25',right='0.25',top='0.4',bottom='0.4',header='0.2',footer='0.2')
             E.SubElement(root,'pageSetup',orientation='landscape',paperSize='9',fitToWidth='1',fitToHeight='0')
             z.writestr(f'xl/worksheets/sheet{index}.xml',xml_bytes(root))

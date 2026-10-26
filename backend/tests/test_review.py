@@ -62,13 +62,18 @@ def test_concurrent_new_and_updates_refuse_stale(environment):
 def test_distinct_identity_coexists(environment,field,value):
     c,path,data=environment;publish(c,data);new={**data,field:value,'conditions_confirmed':True};d=draft(c,new);assert get(c,d['batch_id'])['preview']['items'][0]['kind']=='new';assert decide(c,submit(c,d['batch_id'])).status_code==200;assert search(c,date_scope='all')['total']==2
 
-def test_new_period_overlap_and_explicit_target(environment):
+def test_new_period_updates_existing_quote(environment):
     c,path,data=environment;publish(c,data)
-    d=draft(c,{**data,'valid_from':'2026-12-01','valid_to':'2026-12-31'});assert decide(c,submit(c,d['batch_id'])).status_code==200
-    d=draft(c,{**data,'valid_from':'2026-11-15','valid_to':'2026-12-15'});p=get(c,d['batch_id']);assert not p['preview']['can_submit']
-    target=p['targets'][0]
-    assert c.put('/api/review/rows/'+d['id'],json={'revision':1,'target_quote_id':target['quote_id'],'expected_version':target['version']}).status_code==200
-    assert not get(c,d['batch_id'])['preview']['can_submit'] # still collides with second period
+    qid=search(c,date_scope='all')['items'][0]['quote_id']
+    for dates in [('2026-12-01','2026-12-31'),('2026-11-15','2026-12-15')]:
+        d=draft(c,{**data,'valid_from':dates[0],'valid_to':dates[1],'prices':{'20GP':'1234'}})
+        p=get(c,d['batch_id'])['preview'];assert p['can_submit']
+        assert p['items'][0]['kind']=='modified'
+        assert p['items'][0]['target']['quote_id']==qid
+        assert decide(c,submit(c,d['batch_id'])).status_code==200
+    assert search(c,date_scope='all')['total']==1
+    assert len(c.get(f'/api/quotes/{qid}/history').json()['items'])==3
+
 
 def merge(path,ids,bid):
     with connect(path) as db:
@@ -196,3 +201,45 @@ def test_optional_field_migration_preserves_versions_prices_evidence(tmp_path,mo
         assert db.execute('SELECT * FROM quote_prices').fetchall()==prices
         assert db.execute('SELECT quote_version_id FROM source_evidence').fetchone()[0]==vid
         assert not db.execute('PRAGMA foreign_key_check').fetchall()
+
+@pytest.mark.parametrize('dates',[('', ''),('2026-12-01','2026-12-31')])
+def test_batch_same_identity_conflicting_periods_block(environment,dates):
+    c,path,data=environment
+    a=draft(c,data);b=draft(c,{**data,'valid_from':dates[0],'valid_to':dates[1]})
+    merge(path,[b['id']],a['batch_id'])
+    p=get(c,a['batch_id'])['preview']
+    assert not p['can_submit'] and all(i['problems'] for i in p['items'])
+
+
+def test_missing_dates_duplicates_publish_once(environment):
+    c,path,data=environment;data={**data,'valid_from':'','valid_to':''}
+    a=draft(c,data);b=draft(c,data);merge(path,[b['id']],a['batch_id'])
+    p=get(c,a['batch_id'])['preview']
+    assert sorted(i['kind'] for i in p['items'])==['duplicate','new']
+    assert decide(c,submit(c,a['batch_id'])).status_code==200
+    assert search(c,date_scope='all')['total']==1
+
+
+def test_legacy_multiple_candidates_require_explicit_target(environment):
+    from backend.tests.quote_fixtures import insert_published
+    c,path,data=environment
+    insert_published(path,data,'legacy-a')
+    insert_published(path,{**data,'valid_from':'2026-12-01','valid_to':'2026-12-31'},'legacy-b')
+    row=draft(c,{**data,'valid_from':'2027-01-01','valid_to':'2027-01-31'})
+    p=get(c,row['batch_id'])['preview']
+    assert not p['can_submit'] and '多笔' in p['items'][0]['problems'][0]
+    assert c.put('/api/review/rows/'+row['id'],json={'revision':1,'target_quote_id':'legacy-b','expected_version':1}).status_code==200
+    assert get(c,row['batch_id'])['preview']['can_submit']
+    assert decide(c,submit(c,row['batch_id'])).status_code==200
+    assert search(c,date_scope='all')['total']==2
+
+
+def test_dedup_retains_both_source_evidence(environment):
+    c,path,data=environment
+    a=draft(c,data);b=draft(c,{**data,'manual_note':'第二份原件依据'})
+    third=draft(c,{**data,'manual_note':'第三份原件依据'})
+    merge(path,[b['id'],third['id']],a['batch_id'])
+    assert decide(c,submit(c,a['batch_id'])).status_code==200
+    qid=search(c,date_scope='all')['items'][0]['quote_id']
+    history=c.get(f'/api/quotes/{qid}/history').json()
+    assert len(history['items'][0]['evidence'])==3

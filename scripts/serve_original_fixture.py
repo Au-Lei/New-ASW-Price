@@ -18,6 +18,14 @@ s=Settings(folder/'data',folder/'logs','Asia/Shanghai',ai_enabled=False,ai_key_f
 initialize(database);bootstrap(database,s)
 with connect(database) as db:db.execute("UPDATE users SET password_hash=?,must_change_password=0 WHERE id='local-admin'",(TEST_HASH,))
 value=sample_data(database);value['path_text']='青岛-鹿特丹';insert_published(database,value)
+if '--port-groups' in sys.argv:
+    insert_published(database,{**value,'carrier_id':'carrier-b'},'group-second',prices={'20GP':120000,'40GP':210000})
+    with connect(database) as db:
+        db.row_factory=__import__('sqlite3').Row
+        port=db.execute("SELECT * FROM ports WHERE name_en='HAMBURG' LIMIT 1").fetchone()
+        route=db.execute('SELECT route_id FROM port_routes WHERE port_id=?',(port['id'],)).fetchone()[0]
+    insert_published(database,{**value,'destination_port_id':port['id'],'route_id':route},'group-hamburg')
+
 x=sheet();x['headers']=HEADERS+EXTRAS;x['rows'][0]+= ['青岛','ETD','海运费','PSS另计','目的港费用待确认','','测试直达服务','direct','测试代理a','测试协议a','','','']
 (folder/'synthetic.xlsx').write_bytes(write_workbook([x]))
 uvicorn.run(create_app(s),host='127.0.0.1',port=8004,proxy_headers=False)

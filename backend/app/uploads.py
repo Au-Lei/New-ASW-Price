@@ -24,7 +24,7 @@ from .excel_format import read_xlsx, HEADERS, column
 from .review import actor, audit, batch, dump, EDITABLE
 from .pod_excel import parse_pod,can_parse as can_parse_pod,NotPOD
 
-MIMES={'.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'}
+MIMES={'.xls':'application/vnd.ms-excel','.xsl':'application/octet-stream','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'}
 Image.MAX_IMAGE_PIXELS=40_000_000
 
 class InvalidFile(ValueError): pass
@@ -34,16 +34,17 @@ def fixed_template(sheets):
 
 def validate_file(content,filename,settings):
     ext=Path(filename).suffix.lower()
-    if ext=='.xls': raise InvalidFile('旧版xls请先另存为xlsx')
-    if ext not in MIMES:raise InvalidFile('仅支持xlsx、pdf、jpg、jpeg、png文件')
+    if ext not in MIMES:raise InvalidFile('仅支持xls、xlsx、pdf、jpg、jpeg、png文件；xsl仅兼容误命名的Excel')
     if not content:raise InvalidFile('文件为空，请重新选择')
     if len(content)>settings.upload_max_bytes:raise InvalidFile('文件大小超过允许上限')
     try:
-        if ext=='.xlsx':
-            if not content.startswith(b'PK\x03\x04'):raise InvalidFile('文件内容不是xlsx，可能已加密或扩展名不符；请另存为未加密xlsx')
+        if ext in ('.xls','.xlsx','.xsl'):
+            from .legacy_excel import OLE_MAGIC
+            if not content.startswith((b'PK\x03\x04',OLE_MAGIC)):
+                raise InvalidFile('文件内容不是xls/xlsx，可能损坏或加密；xsl样式表和HTML伪装表格请另存为未加密xlsx')
             try:sheets=read_xlsx(content,settings.upload_max_bytes)
             except ValueError as exc:raise InvalidFile(str(exc)) from exc
-            return {'kind':'xlsx','fixed_template':fixed_template(sheets),'local_parseable':fixed_template(sheets) or can_parse_pod(sheets),'worksheets':[s['name'] for s in sheets],'formula_cells':sum(len(s['formulas']) for s in sheets)}
+            return {'kind':'xlsx','excel_format':'xls' if content.startswith(OLE_MAGIC) else 'xlsx','extension_mismatch':ext!=('.xls' if content.startswith(OLE_MAGIC) else '.xlsx'),'fixed_template':fixed_template(sheets),'local_parseable':fixed_template(sheets) or can_parse_pod(sheets),'worksheets':[s['name'] for s in sheets],'formula_cells':sum(len(s['formulas']) for s in sheets)}
         if ext=='.pdf':
             if not content.startswith(b'%PDF-'):raise InvalidFile('文件内容不是PDF，与扩展名不符')
             reader=PdfReader(BytesIO(content),strict=True)
@@ -71,7 +72,7 @@ def validate_file(content,filename,settings):
 
 def file_path(settings,row):
     root=(settings.data_dir/'uploads').resolve();key=row['storage_key']
-    if not re.fullmatch(r'[0-9a-f]{32}\.(xlsx|pdf|png|jpe?g)',key):raise HTTPException(422,'原件存储标识无效')
+    if not re.fullmatch(r'[0-9a-f]{32}\.(xlsx|xls|xsl|pdf|png|jpe?g)',key):raise HTTPException(422,'原件存储标识无效')
     path=root/key
     if path.is_symlink() or path.resolve().parent!=root or not path.is_file():raise HTTPException(404,'原件已缺失，请联系管理员恢复备份')
     return path
@@ -230,7 +231,7 @@ def uploads_router(database,settings,worker):
                 if count>=settings.upload_max_files:raise HTTPException(422,f'每批最多{settings.upload_max_files}个文件')
                 fid=uuid4().hex;storage=fid+Path(filename).suffix.lower();root=settings.data_dir/'uploads';root.mkdir(parents=True,exist_ok=True);saved=root/storage
                 with saved.open('xb') as output:output.write(content)
-                db.execute('INSERT INTO uploaded_files(id,batch_id,original_name,storage_key,sha256,media_type,size_bytes,metadata_json) VALUES (?,?,?,?,?,?,?,?)',(fid,bid,filename,storage,digest,MIMES[Path(filename).suffix.lower()],len(content),dump(metadata)))
+                db.execute('INSERT INTO uploaded_files(id,batch_id,original_name,storage_key,sha256,media_type,size_bytes,metadata_json) VALUES (?,?,?,?,?,?,?,?)',(fid,bid,filename,storage,digest,MIMES['.'+metadata['excel_format']] if metadata.get('excel_format') else MIMES[Path(filename).suffix.lower()],len(content),dump(metadata)))
                 db.execute('UPDATE upload_batches SET revision=revision+1 WHERE id=?',(bid,));audit(db,who,'upload_file','uploaded_file',fid,after={'filename':filename,'sha256':digest,'size_bytes':len(content)})
                 response={'id':fid,'batch_id':bid,'duplicate':False,'metadata':metadata,'original_name':filename}
             return response

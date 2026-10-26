@@ -17,8 +17,8 @@ async function commit(){if(busy.value||!selected.value.length)return;busy.value=
 onMounted(async()=>{await load();if(props.initialId)await open(props.initialId)})
 </script>
 <template><section class="quotes-panel"><div class="catalog-heading"><div><h2>Excel报价导入</h2><p>按18列模板读取，先预览和选择，再生成未审批草稿。</p></div><a class="small-button" href="/api/excel/template" download>下载填写模板</a></div>
-  <div class="quote-banner">仅支持xlsx，每个文件不超过20MB。空价格目录不生成报价；不执行公式。PDF、图片请使用“上传原件与提取报价”；AI将在任务八接入。</div>
-  <form class="catalog-form quote-form" @submit.prevent="upload"><fieldset :disabled="busy"><label>Excel报价文件<input type="file" accept=".xlsx" @change="choose"></label><h3>原文件缺失时的补充条件</h3><p class="catalog-note">以下条件只填补原文件空白，不覆盖文件中已有值；导入后仍须核对起运港并确认零价及适用条件。</p><div class="form-fields">
+  <div class="quote-banner">支持xls、xlsx，每个文件不超过20MB。空价格目录不生成报价；不执行公式。PDF、图片请使用“上传原件与提取报价”。</div>
+  <form class="catalog-form quote-form" @submit.prevent="upload"><fieldset :disabled="busy"><label>Excel报价文件<input type="file" accept=".xls,.xsl,.xlsx" @change="choose"></label><h3>原文件缺失时的补充条件</h3><p class="catalog-note">以下条件只填补原文件空白，不覆盖文件中已有值；导入后仍须核对起运港并确认零价及适用条件。</p><div class="form-fields">
   <label>默认起运港<select v-model="options.origin_port_id"><option v-for="p in refs.ports.filter(p=>p.active)" :key="p.id" :value="p.id">{{portLabel(p)}}</option></select></label>
   <label>默认报价来源<select v-model="options.source_series_id"><option value="">留空，导入后补齐</option><option v-for="s in refs.source_series.filter(s=>s.active)" :key="s.id" :value="s.id">{{refs.suppliers.find(p=>p.id===s.supplier_id)?.name}} · {{s.name}}</option></select></label>
   <label>默认币种<select v-model="options.currency"><option value="">留空，导入后补齐</option><option v-for="c in currencies" :key="c">{{c}}</option></select></label>

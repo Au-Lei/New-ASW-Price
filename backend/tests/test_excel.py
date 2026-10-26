@@ -304,7 +304,8 @@ def test_ui_template_export_all_and_simple_filtered_one_sheet(env):
     assert all(not s['cells'].get('D4') for s in sheets) # no original template catalog rows
     with ZipFile(BytesIO(response.content)) as z:
         root=E.fromstring(z.read('xl/worksheets/sheet2.xml'))
-        assert root.find('x:sheetViews/x:sheetView/x:pane',NS).get('topLeftCell')=='F3'
+        pane=root.find('x:sheetViews/x:sheetView/x:pane',NS)
+        assert pane.get('topLeftCell')=='F3' and pane.get('xSplit')=='5' and pane.get('ySplit')=='2'
         assert len(root.find('x:cols',NS))==18
     simple=client.post('/api/excel/export',json={**q,'export_layout':'simple'})
     assert simple.headers['x-export-count']=='2'
@@ -313,6 +314,10 @@ def test_ui_template_export_all_and_simple_filtered_one_sheet(env):
     assert [combined[0]['cells'][column(i)+'7'] for i in range(1,19)]==HEADERS
     assert {combined[0]['cells']['D8'],combined[0]['cells']['D9']}=={'ROTTERDAM','TOKYO'}
     assert combined[0]['cells'].get('S7') is None
+    with ZipFile(BytesIO(simple.content)) as z:
+        root=E.fromstring(z.read('xl/worksheets/sheet1.xml'))
+        pane=root.find('x:sheetViews/x:sheetView/x:pane',NS)
+        assert pane.attrib=={'xSplit':'5','ySplit':'7','topLeftCell':'F8','activePane':'bottomRight','state':'frozen'}
     filtered=client.post('/api/excel/export',json={**q,'destination_text':'鹿特','export_layout':'simple'})
     assert filtered.headers['x-export-count']=='1'
     assert read_xlsx(filtered.content)[0]['cells']['D8']=='ROTTERDAM'
@@ -328,7 +333,39 @@ def test_full_template_separates_origins_and_merges_route_groups(env):
     sheets=read_xlsx(response.content)
     assert len(sheets)==7 and sheets[-1]['name']=='TOKYO-欧洲航线'
     assert 'TOKYO' in sheets[-1]['cells']['A1']
-    assert [sheets[-1]['cells']['D'+str(i)] for i in range(3,6)]==['ROTTERDAM']*3
+    assert [sheets[-1]['cells'].get('D'+str(i),'') for i in range(3,6)]==['ROTTERDAM','','']
     with ZipFile(BytesIO(response.content)) as z:
         root=E.fromstring(z.read('xl/worksheets/sheet7.xml'))
         assert 'A3:A5' in [m.get('ref') for m in root.find('x:mergeCells',NS)]
+
+@pytest.mark.parametrize('layout',['simple','template','detailed'])
+def test_same_port_grouping_preserves_each_quote_and_separates_origins(env,layout):
+    client,path,data,_=env
+    tokyo=client.get('/api/catalog/ports?q=TOKYO').json()['items'][0]
+    for index in range(3):
+        insert_published(path,{**data,'carrier_id':'carrier-b' if index==1 else 'carrier-a','source_series_id':'series-b' if index==2 else 'series-a'},'group-'+str(index),prices={'20GP':100000+index*10000})
+    insert_published(path,{**data,'origin_port_id':tokyo['id']},'other-origin',prices={'20GP':150000})
+    result=client.post('/api/excel/export',json={'origin_port_id':'','date_scope':'all','export_layout':layout})
+    assert result.status_code==200,result.text
+    sheets=read_xlsx(result.content)
+    # Country/port labels appear once per origin group; every price is retained.
+    assert sum(v=='ROTTERDAM' for s in sheets for a,v in s['cells'].items() if a.startswith('D') and a[1:].isdigit())==2
+    amounts=[v for s in sheets for a,v in s['cells'].items() if a.startswith('G') and a[1:].isdigit() and v and v not in ('20GP',)]
+    assert sorted(Decimal(v) for v in amounts)==[Decimal(1000),Decimal(1100),Decimal(1200),Decimal(1500)]
+    with ZipFile(BytesIO(result.content)) as z:
+        ranges=[]
+        for file in z.namelist():
+            if file.startswith('xl/worksheets/sheet') and file.endswith('.xml'):
+                root=E.fromstring(z.read(file))
+                ranges.extend(m.get('ref') for m in root.findall('x:mergeCells/x:mergeCell',NS))
+        start=3 if layout=='template' else 8
+        assert all(f'{col}{start}:{col}{start+2}' in ranges for col in 'BCDE')
+    queried=client.post('/api/quotes/search',json={'origin_port_id':'','date_scope':'all'}).json()
+    assert queried['total']==4 and all(r['destination']['name_en']=='ROTTERDAM' for r in queried['items'])
+
+
+def test_unknown_ports_never_grouped():
+    from backend.app.port_groups import grouped,merge_ranges,port_key
+    assert port_key({'destination_port_id':''}) is None
+    rows,keys=grouped([['first'],['second']],[None,None])
+    assert rows==[['first'],['second']] and merge_ranges(keys,8)==[]

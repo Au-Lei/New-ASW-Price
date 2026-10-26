@@ -85,3 +85,22 @@ def test_AI_normalization_reuses_same_file_port_dictionary_and_date_range(tmp_pa
  assert r['data']['valid_from']=='2026-10-18' and r['data']['valid_to']=='2026-10-24'
  assert r['display']['destination']['name_en']=='SINGAPORE'
  assert r['data']['prices']['40HQ']=='456.00'
+
+@pytest.mark.parametrize('heading,expected',[('备注','仅限普货'),('注意事项','仅限普货'),('Notes','仅限普货'),('其他数据',''),('','')])
+def test_local_remark_only_labelled_columns(tmp_path,heading,expected):
+ path=tmp_path/'db';initialize(path)
+ content=write_workbook([{'name':'青岛','headers':['POD',"20'","40'",heading],'rows':[['SGSGP','100','200','仅限普货']], 'metadata':[]}])
+ with connect(path) as db:
+  result=parse_pod(db,content,len(content)+1)
+ assert result['rows'][0]['data']['remark']==expected
+ assert result['rows'][0]['mapping_notes']
+ assert result['rows'][0]['raw']['original_port_code']=='SGSGP'
+
+
+def test_local_remark_after_separate_40_columns(tmp_path):
+ path=tmp_path/'db';initialize(path)
+ content=write_workbook([{'name':'青岛','headers':['POD','20GP','40GP','40HQ','Remarks'],'rows':[['SGSGP','100','200','250','限普货']], 'metadata':[]}])
+ with connect(path) as db:row=parse_pod(db,content,len(content)+1)['rows'][0]
+ assert row['data']['remark']=='限普货'
+ assert row['data']['prices']['40HQ']=='250.00'
+ assert any(s['cell_range'].startswith('E') and s['excerpt']=='限普货' for s in row['sources'])

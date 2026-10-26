@@ -11,6 +11,7 @@ from pathlib import Path
 from xml.etree import ElementTree as E
 from zipfile import ZipFile,ZIP_DEFLATED
 from .excel_format import MAIN,REL,NS,column,safe_text
+from .port_groups import grouped,merge_ranges
 
 TEMPLATE=Path(__file__).resolve().parents[1]/'assets/quotation-template.xlsx'
 CT='http://schemas.openxmlformats.org/package/2006/content-types'
@@ -37,11 +38,11 @@ def write_template(sheets):
     content=E.fromstring(files['[Content_Types].xml'])
     specs=[];by_name={};by_group={}
     for index,node in enumerate(nodes,1):
-        spec={'name':node.get('name'),'file':f'xl/worksheets/sheet{index}.xml','rows':[],'origin':'青岛'}
+        spec={'name':node.get('name'),'file':f'xl/worksheets/sheet{index}.xml','rows':[],'port_groups':[],'origin':'青岛'}
         specs.append(spec);by_name[spec['name']]=spec
     default_root=files[specs[0]['file']]
     for sheet in sheets:
-        for row in sheet['rows']:
+        for row,key in zip(sheet['rows'],sheet['port_groups']):
             origin=row[18] or '起运港未填写'
             region=sheet['name']
             # Keep the six original Qingdao tabs and give other origins their own tabs.
@@ -57,10 +58,11 @@ def write_template(sheets):
                 E.SubElement(nodes,f'{{{MAIN}}}sheet',name=name,sheetId=str(number),attrib={f'{{{REL}}}id':rid})
                 E.SubElement(relations,f'{{{PKG}}}Relationship',Id=rid,Type=REL+'/worksheet',Target=f'worksheets/sheet{number}.xml')
                 E.SubElement(content,f'{{{CT}}}Override',PartName='/'+file,ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml')
-                by_name[name]={'name':name,'file':file,'rows':[],'origin':origin};specs.append(by_name[name])
+                by_name[name]={'name':name,'file':file,'rows':[],'port_groups':[],'origin':origin};specs.append(by_name[name])
                 files[file]=default_root
             by_group[group]=name
             by_name[name]['rows'].append(row[:18])
+            by_name[name]['port_groups'].append(key)
     for spec in specs:
         root=E.fromstring(files[spec['file']]);data=root.find('x:sheetData',NS)
         prototype=deepcopy(data[2]);styles=[c.get('s','0') for c in prototype]
@@ -70,12 +72,18 @@ def write_template(sheets):
             title=data[0][0]
             for child in list(title):title.remove(child)
             title.set('t','inlineStr');E.SubElement(E.SubElement(title,f'{{{MAIN}}}is'),f'{{{MAIN}}}t').text=spec['origin']+'港到'+spec['name'].split('-',1)[-1]+'报价表'
-        rows=sorted(spec['rows'],key=lambda r:tuple(str(r[i] or '') for i in (0,1,3,5)))
+        pairs=sorted(zip(spec['rows'],spec['port_groups']),key=lambda p:tuple(str(p[0][i] or '') for i in (0,1,3,5)))
+        rows,keys=grouped([r for r,k in pairs],[k for r,k in pairs])
+        port_ranges=merge_ranges(keys,3)
+        covered=set()
+        for ref in port_ranges:
+            first,last=ref.split(':');col=first[0]
+            covered.update(f'{col}{n}' for n in range(int(first[1:])+1,int(last[1:])+1))
         for index,values in enumerate(rows,3):
             row=E.SubElement(data,f'{{{MAIN}}}row',r=str(index),ht='36',customHeight='1')
             for col,value in enumerate(values,1):
                 cell=E.SubElement(row,f'{{{MAIN}}}c',r=f'{column(col)}{index}',s=styles[col-1])
-                if value is None or value=='':continue
+                if value is None or value=='' or f'{column(col)}{index}' in covered:continue
                 if isinstance(value,(date,datetime)):
                     day=value.date() if isinstance(value,datetime) else value
                     E.SubElement(cell,f'{{{MAIN}}}v').text=str((day-date(1899,12,30)).days)
@@ -96,6 +104,7 @@ def write_template(sheets):
                     for child in list(cell):cell.remove(child)
                     cell.attrib.pop('t',None)
             start=stop
+        for ref in port_ranges:E.SubElement(merges,f'{{{MAIN}}}mergeCell',ref=ref)
         merges.set('count',str(len(merges)))
         for validation in root.findall('x:dataValidations/x:dataValidation',NS):validation.set('sqref',f'J3:J{max(3,len(rows)+2)}')
         files[spec['file']]=xml_bytes(root)

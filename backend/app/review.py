@@ -42,7 +42,11 @@ def current(db):
         result.append({'quote_id':v['quote_id'],'version':v['version'],'version_id':v['id'],'data':data,'evidence':[dict(e) for e in db.execute('SELECT e.*,f.original_name FROM source_evidence e LEFT JOIN uploaded_files f ON f.id=e.file_id WHERE e.quote_version_id=?',(v['id'],))]})
     return result
 
-def identity(data): return tuple(str(data[k]).strip().casefold() for k in IDENTITY)
+def identity(data): return tuple(' '.join(str(data[k]).split()).casefold() for k in IDENTITY)
+
+def identifiable(data):
+    # Blank ports remain publishable, but must not silently replace another quote.
+    return bool(data.get('origin_port_id') and data.get('destination_port_id'))
 def overlap(a,b): return bool(a['valid_from'] and a['valid_to'] and b['valid_from'] and b['valid_to']) and a['valid_from']<=b['valid_to'] and b['valid_from']<=a['valid_to']
 def comparable(data):
     result={k:v for k,v in data.items() if k not in ('manual_note','zero_confirmed')}
@@ -57,8 +61,9 @@ def preview(db,batch_id):
         if not r['included']: continue
         data=json.loads(r['edited_json']); actions=json.loads(r['field_actions_json']); problems=[]
         candidates=[v for v in published if identity(v['data'])==identity(data)]
-        same=[v for v in candidates if v['data']['valid_from']==data['valid_from'] and v['data']['valid_to']==data['valid_to']]
-        target=next((v for v in published if v['quote_id']==r['target_quote_id']),None) if r['target_quote_id'] else (same[0] if len(same)==1 else None)
+        target=next((v for v in published if v['quote_id']==r['target_quote_id']),None) if r['target_quote_id'] else (candidates[0] if len(candidates)==1 and identifiable(data) else None)
+        if not r['target_quote_id'] and len(candidates)>1 and identifiable(data):
+            problems.append('存在多笔同身份历史报价，请明确选择修订目标，不能自动新增或覆盖')
         if r['target_quote_id'] and (not target or target['version']!=r['expected_version']): problems.append('目标报价已变更或停用，请重新选择目标版本')
         if target:
             old=target['data']
@@ -81,14 +86,22 @@ def preview(db,batch_id):
         duplicate_of=None
         if not problems:
             for prior in seen:
-                if (target and prior['target'] and target['quote_id']==prior['target']['quote_id']) or (identity(prior['data'])==identity(data) and overlap(prior['data'],data)):
-                    if comparable(prior['data'])==comparable(data): duplicate_of=prior['row_id'];kind='duplicate'
+                if (target and prior['target'] and target['quote_id']==prior['target']['quote_id']) or (identity(prior['data'])==identity(data) and identifiable(data)):
+                    if comparable(prior['data'])==comparable(data):
+                        duplicate_of=prior['duplicate_of'] or prior['row_id'];kind='duplicate'
                     else:
                         problems.append('批次内存在相互矛盾的报价，请移回草稿或调整')
                         prior['problems'].append('批次内存在相互矛盾的报价，请移回草稿或调整')
         evidence=[dict(e) for e in db.execute('SELECT e.*,f.original_name FROM source_evidence e LEFT JOIN uploaded_files f ON f.id=e.file_id WHERE e.draft_row_id=?',(r['id'],))]
         item={'row_id':r['id'],'revision':r['revision'],'kind':kind,'data':data,'display':decorate(data,lookup),'target':target,'changes':changes,'problems':problems,'duplicate_of':duplicate_of,'evidence':evidence}
         items.append(item);seen.append(item)
+    # Deduplication must retain every original source for the published row.
+    by_id={item['row_id']:item for item in items}
+    for item in items:
+        if item['duplicate_of']:
+            canonical=by_id[item['duplicate_of']]
+            existing={e['id'] for e in canonical['evidence']}
+            canonical['evidence'].extend(e for e in item['evidence'] if e['id'] not in existing)
     value={'batch_id':batch_id,'revision':b['revision'],'items':items}
     value['token']=fingerprint(value)
     value['can_submit']=bool(items) and not any(i['problems'] for i in items) and any(i['kind'] in ('new','modified') for i in items)
