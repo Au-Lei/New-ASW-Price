@@ -25,7 +25,7 @@ def principal_present():
     from .auth import principal_id
     return principal_id.get() is not None
 def batch(db,identity,editable=False):
-    row=db.execute('SELECT * FROM upload_batches WHERE id=?',(identity,)).fetchone()
+    row=db.execute('SELECT * FROM upload_batches WHERE id=? AND deleted_at IS NULL',(identity,)).fetchone()
     if not row: raise HTTPException(404,'批次不存在')
     if principal_present() and actor(db)['role']!='admin' and row['owner_id']!=actor(db)['id']: raise HTTPException(403,'只能修改本人批次')
     if editable and row['status'] not in EDITABLE: raise HTTPException(409,'批次已锁定，请先撤回或等待审批')
@@ -102,6 +102,12 @@ def preview(db,batch_id):
             canonical=by_id[item['duplicate_of']]
             existing={e['id'] for e in canonical['evidence']}
             canonical['evidence'].extend(e for e in item['evidence'] if e['id'] not in existing)
+    original_data={r['id']:json.loads(r['edited_json']) for r in rows}
+    for item in items:
+        supplied=original_data[item['row_id']]
+        if not all(supplied.get(k) and item['data'].get(k) for k in ('valid_from','valid_to')):
+            item['problems'].append('有效期缺失，请补齐有效期起和有效期止后再提交审批')
+        item['problems']=list(dict.fromkeys(item['problems']))
     value={'batch_id':batch_id,'revision':b['revision'],'items':items}
     value['token']=fingerprint(value)
     value['can_submit']=bool(items) and not any(i['problems'] for i in items) and any(i['kind'] in ('new','modified') for i in items)
@@ -135,7 +141,7 @@ def review_router(database):
     def batches():
         with connection() as db:
             db.row_factory=sqlite3.Row
-            return {'operator':{k:v for k,v in actor(db).items() if k!='password_hash'},'items':[dict(r) for r in db.execute("SELECT b.*, (SELECT count(*) FROM draft_rows d WHERE d.batch_id=b.id) row_count FROM upload_batches b WHERE EXISTS(SELECT 1 FROM draft_rows d WHERE d.batch_id=b.id) AND (?='admin' OR b.owner_id=?) ORDER BY b.rowid DESC",(actor(db)['role'],actor(db)['id']))]}
+            return {'operator':{k:v for k,v in actor(db).items() if k!='password_hash'},'items':[dict(r) for r in db.execute("SELECT b.*, (SELECT count(*) FROM draft_rows d WHERE d.batch_id=b.id) row_count FROM upload_batches b WHERE b.deleted_at IS NULL AND EXISTS(SELECT 1 FROM draft_rows d WHERE d.batch_id=b.id) AND (?='admin' OR b.owner_id=?) ORDER BY b.rowid DESC",(actor(db)['role'],actor(db)['id']))]}
     @router.get('/review/batches/{bid}')
     def detail(bid:str):
         with connection() as db:

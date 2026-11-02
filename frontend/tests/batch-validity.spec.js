@@ -1,0 +1,28 @@
+import {test,expect} from '@playwright/test'
+test('header date pickers apply to every row and individual dates remain editable',async({page})=>{
+ await page.goto('http://127.0.0.1:8004/')
+ await page.getByLabel('账号',{exact:true}).fill('admin')
+ await page.getByLabel('密码',{exact:true}).fill('Isolated-test-password-2026!')
+ await page.getByRole('button',{name:'登录',exact:true}).click()
+ const app=page.frameLocator('iframe')
+ await app.locator('#view-home .entry').nth(1).click()
+ const frame=page.frames().find(f=>f.url().includes('quotation.html'))
+ await frame.evaluate(()=>{pane('edit',2);for(let i=0;i<3;i++)addRow();editRows[1].validFrom='2026-01-01';editRows[1].validTo='2026-02-01';renderEdit()})
+ await app.getByLabel('统一有效期起',{exact:true}).fill('2026-11-01')
+ await app.getByLabel('统一有效期起',{exact:true}).blur()
+ await app.getByLabel('统一有效期止',{exact:true}).fill('2026-11-30')
+ await app.getByLabel('统一有效期止',{exact:true}).blur()
+ for(let i=0;i<3;i++){
+  await expect(app.locator(`input[data-r="${i}"][data-k="validFrom"]`)).toHaveValue('2026-11-01')
+  await expect(app.locator(`input[data-r="${i}"][data-k="validTo"]`)).toHaveValue('2026-11-30')
+ }
+ await app.locator('input[data-r="1"][data-k="validTo"]').fill('2026-12-10')
+ await app.locator('input[data-r="1"][data-k="validTo"]').blur()
+ await expect(app.getByLabel('统一有效期止',{exact:true})).toHaveValue('')
+ await expect(app.locator('input[data-r="0"][data-k="validTo"]')).toHaveValue('2026-11-30')
+ page.once('dialog',d=>d.accept())
+ await app.getByRole('button',{name:'提交审批 →',exact:true}).click()
+ await expect(app.locator('#pane-diff')).toBeVisible()
+ const dates=await frame.evaluate(()=>review.preview.items.map(i=>i.data.valid_to).sort())
+ expect(dates).toEqual(['2026-11-30','2026-11-30','2026-12-10'])
+})

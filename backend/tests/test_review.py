@@ -31,8 +31,8 @@ def test_publish_modify_keep_prices_history_idempotency(environment):
         with pytest.raises(sqlite3.IntegrityError):db.execute("UPDATE submissions SET snapshot_json='{}'")
 
 def test_incomplete_and_stale_preview(environment):
-    c,path,data=environment;bad=draft(c,{**data,'valid_to':''});p=get(c,bad['batch_id'])['preview'];assert p['can_submit']
-    assert decide(c,submit(c,bad['batch_id'])).status_code==200
+    c,path,data=environment;bad=draft(c,{**data,'valid_to':''});p=get(c,bad['batch_id'])['preview'];assert not p['can_submit']
+    assert c.post(f"/api/review/batches/{bad['batch_id']}/submit",json={'token':p['token']}).status_code==422
     d=draft(c,data);p=get(c,d['batch_id'])['preview'];c.put(f"/api/manual-drafts/{d['id']}?expected_revision=1",json={**data,'remark':'changed'})
     assert c.post(f"/api/review/batches/{d['batch_id']}/submit",json={'token':p['token']}).status_code==409
 
@@ -144,8 +144,7 @@ def test_two_distinct_rows_fail_second_rolls_back_first(environment):
 def test_clear_required_field_and_inactive_reference_block(environment):
     c,path,data=environment;publish(c,data);d=draft(c,{**data,'prices':{'20GP':'1234'}});qid=search(c,date_scope='all')['items'][0]['quote_id']
     assert c.put('/api/review/rows/'+d['id'],json={'revision':1,'target_quote_id':qid,'expected_version':1,'field_actions':{'valid_from':'clear'}}).status_code==200
-    assert get(c,d['batch_id'])['preview']['can_submit']
-    assert decide(c,submit(c,d['batch_id'])).status_code==200
+    assert not get(c,d['batch_id'])['preview']['can_submit']
     other=draft(c,{**data,'source_series_id':'series-b'});sid=submit(c,other['batch_id'])
     with connect(path) as db:db.execute("UPDATE suppliers SET active=0 WHERE id='supplier-b'")
     assert decide(c,sid).status_code==409
@@ -154,7 +153,7 @@ def test_clear_required_field_and_inactive_reference_block(environment):
 def test_all_blank_fields_publish_search_export_and_revision(environment):
     from backend.app.quotation import Draft
     c,path,data=environment
-    blank=Draft().model_dump()
+    blank=Draft(valid_from='2026-11-01',valid_to='2026-11-30').model_dump()
     d=draft(c,blank)
     assert get(c,d['batch_id'])['preview']['can_submit']
     sid=submit(c,d['batch_id'])
@@ -162,8 +161,8 @@ def test_all_blank_fields_publish_search_export_and_revision(environment):
     found=search(c,origin_port_id='',date_scope='all')
     assert found['total']==1
     row=found['items'][0]
-    assert row['prices']=={} and row['currency']=='' and row['valid_from']==''
-    assert row['destination']=={'country':{}} and row['date_status']=='有效期未完整'
+    assert row['prices']=={} and row['currency']=='' and row['valid_from']=='2026-11-01'
+    assert row['destination']=={'country':{}} and row['date_status']=='有效'
     assert search(c,origin_port_id='')['total']==1
     assert c.post('/api/excel/export',json={'origin_port_id':'','date_scope':'all'}).status_code==200
     assert c.get('/api/review/batches/'+d['batch_id']+'/export').status_code==200
@@ -216,8 +215,9 @@ def test_missing_dates_duplicates_publish_once(environment):
     a=draft(c,data);b=draft(c,data);merge(path,[b['id']],a['batch_id'])
     p=get(c,a['batch_id'])['preview']
     assert sorted(i['kind'] for i in p['items'])==['duplicate','new']
-    assert decide(c,submit(c,a['batch_id'])).status_code==200
-    assert search(c,date_scope='all')['total']==1
+    assert not p['can_submit']
+    assert c.post(f"/api/review/batches/{a['batch_id']}/submit",json={'token':p['token']}).status_code==422
+    assert search(c,date_scope='all')['total']==0
 
 
 def test_legacy_multiple_candidates_require_explicit_target(environment):

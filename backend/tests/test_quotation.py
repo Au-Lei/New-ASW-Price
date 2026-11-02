@@ -137,10 +137,10 @@ def test_default_date_future_expired_statuses(environment):
     insert_published(path,{**data,'valid_to':'2026-11-25'},'soon')
     result=search(client)
     assert result['reference_date']=='2026-11-15' and result['total']==2
-    assert result['status_counts']=={'未生效':0,'有效':1,'即将到期':1,'已过期':0}
+    assert result['status_counts']=={'未生效':0,'有效':1,'即将到期':1,'已过期':0,'有效期未完整':0}
     all_dates=search(client,date_scope='all')
     assert all_dates['total']==4 and sum(all_dates['status_counts'].values())==4
-    assert all_dates['status_counts']=={'未生效':1,'有效':1,'即将到期':1,'已过期':1}
+    assert all_dates['status_counts']=={'未生效':1,'有效':1,'即将到期':1,'已过期':1,'有效期未完整':0}
 
 
 def test_filters_multicurrency_conditions_pagination_and_sort(environment):
@@ -187,3 +187,22 @@ def test_draft_persists_after_new_app_lifespan(environment):
         login_admin(other)
         assert other.get('/api/manual-drafts').json()['items'][0]['id']==saved['id']
         assert other.post('/api/quotes/search',json={}).json()['total']==0
+
+def test_validity_filter_and_expired_bulk_delete(environment):
+    c,path,data=environment
+    for key,start,end in [('valid','2026-11-01','2026-12-20'),('soon','2026-11-01','2026-11-20'),('expired','2026-10-01','2026-11-14'),('missing','','2026-11-10'),('today','2026-11-01','2026-11-15')]:
+        insert_published(path,{**data,'valid_from':start,'valid_to':end},key)
+    for status,count in [('有效',1),('即将到期',2),('已过期',1),('有效期未完整',1)]:
+        found=search(c,date_scope='all',validity_status=status)
+        assert found['total']==count
+        assert all(r['date_status']==status for r in found['items'])
+        assert sum(found['status_counts'].values())==5
+    p=c.post('/api/quotes/expired/preview').json();assert p['count']==1
+    assert c.post('/api/quotes/expired/delete',json={'token':'0'*64}).status_code==409
+    assert c.post('/api/quotes/expired/delete',json={'token':p['token']}).json()['deleted']==1
+    assert search(c,date_scope='all')['total']==4
+    with connect(path) as db:
+        assert db.execute('SELECT count(*) FROM quote_versions').fetchone()[0]==5
+        assert db.execute("SELECT active FROM quotes WHERE id='expired'").fetchone()[0]==0
+        assert db.execute("SELECT count(*) FROM audit_events WHERE action='delete_expired_quote'").fetchone()[0]==1
+    assert c.post('/api/quotes/expired/preview').json()['count']==0

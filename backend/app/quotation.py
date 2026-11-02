@@ -150,7 +150,7 @@ def manual_rows(db):
     db.row_factory = sqlite3.Row
     from .auth import current_actor
     who=current_actor(db)
-    return db.execute("SELECT d.*, b.status AS batch_status FROM draft_rows d JOIN upload_batches b ON b.id=d.batch_id WHERE json_extract(d.raw_json,'$.kind') IN ('manual','excel','ai') AND (?='admin' OR b.owner_id=?) ORDER BY d.rowid DESC",(who['role'],who['id'])).fetchall()
+    return db.execute("SELECT d.*, b.status AS batch_status FROM draft_rows d JOIN upload_batches b ON b.id=d.batch_id WHERE b.deleted_at IS NULL AND json_extract(d.raw_json,'$.kind') IN ('manual','excel','ai') AND (?='admin' OR b.owner_id=?) ORDER BY d.rowid DESC",(who['role'],who['id'])).fetchall()
 
 
 class Search(BaseModel):
@@ -162,6 +162,7 @@ class Search(BaseModel):
     container_type: Literal['','20GP','40GP','40HQ'] = ''
     etd: str = ''
     date_scope: Literal['applicable','all'] = 'applicable'
+    validity_status: Literal['','有效','即将到期','已过期','有效期未完整'] = ''
     quantities: dict[Literal['20GP','40GP','40HQ'], int] = Field(default_factory=dict, max_length=3)
     sort_by: Literal['destination','carrier','valid_to','transit_days'] = 'destination'
     descending: bool = False
@@ -217,7 +218,7 @@ def search_records(db, search: Search, timezone: str, preview=False, paginate=Tr
         last = date.fromisoformat(item['valid_to']) if item['valid_to'] else None
         if search.date_scope == 'applicable' and ((first and reference < first) or (last and reference > last)):
             continue
-        status = '未生效' if first and reference < first else '已过期' if last and reference > last else '有效期未完整' if not first or not last else '即将到期' if (last - reference).days <= 10 else '有效'
+        status = '有效期未完整' if not first or not last else '未生效' if first and reference < first else '已过期' if last and reference > last else '有效期未完整' if not first or not last else '即将到期' if (last - reference).days <= 10 else '有效'
         missing = [box for box in search.quantities if box not in item['amounts']]
         total = sum(item['amounts'][box] * count for box, count in search.quantities.items()) if search.quantities and not missing else None
         results.append({**decorate(item,lookup), **json.loads(item.get('display_json','{}')), 'prices':{box:f'{Decimal(amount)/100:.2f}' for box,amount in item['amounts'].items()},
@@ -233,8 +234,9 @@ def search_records(db, search: Search, timezone: str, preview=False, paginate=Tr
         return (value is None, value or '')
     results.sort(key=lambda row: row['id'])
     results.sort(key=sort_key, reverse=search.descending)
-    total = len(results)
-    status_counts = {state:sum(r['date_status']==state for r in results) for state in ('未生效','有效','即将到期','已过期')}
+    status_counts = {state:sum(r['date_status']==state for r in results) for state in ('未生效','有效','即将到期','已过期','有效期未完整')}
+    if search.validity_status:results=[r for r in results if r['date_status']==search.validity_status]
+    total=len(results)
     start = (search.page - 1) * search.page_size
     applied = search.model_dump()
     applied['etd'] = reference.isoformat()
@@ -245,8 +247,38 @@ def search_records(db, search: Search, timezone: str, preview=False, paginate=Tr
             'notice':'草稿试查：未审批，不可作为正式报价' if preview else '仅展示已审批、未停用的当前报价版本；报价不代表舱位确认'}
 
 
+class ExpiredDelete(BaseModel):
+    token: str = Field(min_length=64,max_length=64)
+
 def quotation_router(database, settings):
     router = APIRouter(prefix='/api', tags=['人工报价与查询'])
+
+    @router.post('/quotes/expired/preview')
+    def expired_preview():
+        with connect(database) as db:
+            db.row_factory=sqlite3.Row
+            from .auth import current_actor
+            if current_actor(db)['role']!='admin':raise HTTPException(403,'仅管理员可删除过期报价')
+            return expired_snapshot(db)
+    def expired_snapshot(db):
+        import hashlib
+        today=today_in_zone(settings.timezone).isoformat()
+        rows=db.execute("SELECT q.id,v.id FROM quotes q JOIN quote_versions v ON v.quote_id=q.id WHERE q.active=1 AND v.is_current=1 AND v.valid_from<>'' AND v.valid_to<>'' AND v.valid_to<? ORDER BY q.id",(today,)).fetchall()
+        return {'count':len(rows),'token':hashlib.sha256(json.dumps([today,[list(r) for r in rows]]).encode()).hexdigest(),'reference_date':today}
+    @router.post('/quotes/expired/delete')
+    def delete_expired(value:ExpiredDelete):
+        from .review import audit
+        from .auth import current_actor
+        with connect(database) as db:
+            db.row_factory=sqlite3.Row;db.execute('BEGIN IMMEDIATE');who=current_actor(db)
+            if who['role']!='admin':raise HTTPException(403,'仅管理员可删除过期报价')
+            snapshot=expired_snapshot(db)
+            if value.token!=snapshot['token']:raise HTTPException(409,'过期报价已发生变化，请重新确认')
+            ids=[r[0] for r in db.execute("SELECT q.id FROM quotes q JOIN quote_versions v ON v.quote_id=q.id WHERE q.active=1 AND v.is_current=1 AND v.valid_from<>'' AND v.valid_to<>'' AND v.valid_to<?",(snapshot['reference_date'],))]
+            for qid in ids:
+                db.execute('UPDATE quotes SET active=0,disabled_reason=? WHERE id=?',('管理员一键清理过期报价：'+snapshot['reference_date'],qid))
+                audit(db,who,'delete_expired_quote','quote',qid,after={'active':False,'reference_date':snapshot['reference_date']})
+            return {'deleted':len(ids)}
 
     @router.get('/manual-drafts/defaults')
     def defaults():

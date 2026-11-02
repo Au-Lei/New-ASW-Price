@@ -90,8 +90,8 @@ def test_duplicate_same_bytes_concurrent_different_name(upload_env):
     c,path,data,settings,worker=upload_env;bid=batch(c);content=image()
     with ThreadPoolExecutor(2) as pool:responses=list(pool.map(lambda name:upload(c,bid,content,name),('first.png','second.png')))
     assert all(r.status_code==201 for r in responses);assert sum(r.json()['duplicate'] for r in responses)==1;assert len({r.json()['id'] for r in responses})==1
-    other=batch(c);r=upload(c,other,content,'rename.png').json();assert r['duplicate'] and r['batch_id']==bid
-    with connect(path) as db:assert db.execute('SELECT count(*) FROM uploaded_files').fetchone()[0]==1
+    other=batch(c);r=upload(c,other,content,'rename.png').json();assert not r['duplicate'] and r['batch_id']==other
+    with connect(path) as db:assert db.execute('SELECT count(*) FROM uploaded_files').fetchone()[0]==2
 
 def test_fixed_excel_task_result_commit_raw_immutable_no_auto_publish(upload_env):
     c,path,data,settings,worker=upload_env;bid=batch(c);f=upload(c,bid,write_workbook([sheet()]),'test.xlsx').json();t=enqueue(c,f['id']);assert t['status']=='waiting'
@@ -152,6 +152,8 @@ def test_unauthorized_actor_no_header_bypass(upload_env,monkeypatch):
     assert c.get('/api/uploads/files/'+f['id']+'/original',headers={'X-Role':'admin'}).status_code==403
     assert c.get('/api/uploads/batches/'+bid).status_code==403;assert c.get('/api/uploads/tasks/'+t['id']).status_code==403
     assert c.get('/api/uploads/batches').json()['items']==[]
+    assert c.delete('/api/uploads/files/'+f['id']).status_code==403
+    assert c.delete('/api/uploads/batches/'+bid).status_code==403
 
 def test_file_write_transaction_failure_removes_orphan(upload_env):
     c,path,data,settings,worker=upload_env;bid=batch(c)
@@ -222,3 +224,104 @@ def test_encrypted_zip_and_formula_never_execute(upload_env):
         if pos<0:break
         encrypted[pos+8]|=1;pos+=4
     r=upload(c,batch(c),bytes(encrypted),'encrypted.xlsx');assert r.status_code==422;assert '加密' in r.text
+
+def test_delete_uploaded_file_and_reupload(upload_env):
+    c,path,data,settings,worker=upload_env;bid=batch(c)
+    f=upload(c,bid,image()).json();tid=enqueue(c,f['id'])['id']
+    assert c.delete('/api/uploads/files/'+f['id']).status_code==200
+    assert c.get('/api/uploads/batches/'+bid).json()['files']==[]
+    assert c.get('/api/uploads/files/'+f['id']+'/original').status_code==404
+    assert worker.run_once() is False
+    new=upload(c,bid,image()).json();assert new['duplicate'] is False
+    assert new['id']!=f['id']
+
+@pytest.mark.parametrize('status',['draft','pending','approved','rejected','withdrawn'])
+def test_delete_batch_hides_and_locks_without_removing_quotes(upload_env,status):
+    c,path,data,settings,worker=upload_env;bid=batch(c);f=upload(c,bid,image()).json()
+    with connect(path) as db:
+        db.execute('UPDATE upload_batches SET status=? WHERE id=?',(status,bid))
+        before=db.execute('SELECT count(*) FROM quote_versions').fetchone()[0]
+    assert c.delete('/api/uploads/batches/'+bid).status_code==200
+    assert bid not in [b['id'] for b in c.get('/api/uploads/batches').json()['items']]
+    assert c.get('/api/uploads/batches/'+bid).status_code==404
+    assert c.get('/api/review/batches/'+bid).status_code==404
+    assert c.post('/api/uploads/files/'+f['id']+'/extract').status_code==404
+    with connect(path) as db:
+        assert db.execute('SELECT count(*) FROM quote_versions').fetchone()[0]==before
+        assert db.execute("SELECT count(*) FROM audit_events WHERE action='delete_upload_batch'").fetchone()[0]==1
+
+def test_delete_processing_file_and_batch_blocked(upload_env):
+    c,path,data,settings,worker=upload_env;bid=batch(c);f=upload(c,bid,image()).json();tid=enqueue(c,f['id'])['id']
+    with connect(path) as db:db.execute("UPDATE extraction_tasks SET status='processing' WHERE id=?",(tid,))
+    assert c.delete('/api/uploads/files/'+f['id']).status_code==409
+    assert c.delete('/api/uploads/batches/'+bid).status_code==409
+
+def test_deleted_excel_batch_can_extract_same_file_again(upload_env):
+    c,path,data,settings,worker=upload_env;content=write_workbook([sheet()])
+    first=batch(c);f=upload(c,first,content,'test.xlsx').json();tid=enqueue(c,f['id'])['id'];assert worker.run_once()
+    old=task(c,tid)['result']['import_id']
+    assert c.delete('/api/uploads/batches/'+first).status_code==200
+    second=batch(c);f=upload(c,second,content,'test.xlsx').json();tid=enqueue(c,f['id'])['id'];assert worker.run_once()
+    result=task(c,tid);assert result['status']=='success',result
+    new=result['result']['import_id'];assert old!=new
+    assert c.get('/api/excel/imports/'+new).json()['batch_id']==second
+
+
+def test_upload_new_batch_only_contains_selected_file(upload_env):
+    c,path,data,settings,worker=upload_env
+    first=batch(c);upload(c,first,image(color='red'),'one.png');old=upload(c,first,image(color='blue'),'two.png').json()
+    second=batch(c);new=upload(c,second,image(color='blue'),'two.png').json()
+    assert new['batch_id']==second and new['id']!=old['id']
+    files=c.get('/api/uploads/batches/'+second).json()['files']
+    assert [f['original_name'] for f in files]==['two.png']
+    assert len(c.get('/api/uploads/batches/'+first).json()['files'])==2
+    history={b['id']:b for b in c.get('/api/uploads/batches').json()['items']}
+    assert history[first]['file_names']==['one.png','two.png']
+    assert history[second]['file_names']==['two.png']
+
+
+def test_identical_excel_extraction_is_scoped_to_current_file(upload_env):
+    c,path,data,settings,worker=upload_env;content=write_workbook([sheet()]);imports=[]
+    for _ in range(2):
+        bid=batch(c);f=upload(c,bid,content,'two.xlsx').json();tid=enqueue(c,f['id'])['id'];assert worker.run_once()
+        result=task(c,tid);assert result['status']=='success',result
+        iid=result['result']['import_id'];imports.append(iid)
+        assert c.get('/api/excel/imports/'+iid).json()['batch_id']==bid
+    assert imports[0]!=imports[1]
+
+
+def test_entry_scripts_disable_stale_browser_cache(upload_env):
+    c,*_=upload_env
+    for url in ('/','/quotation.html','/quotation-app.js?v=conflict-guard-2'):
+        response=c.get(url)
+        assert response.status_code==200
+        assert response.headers['cache-control']=='no-store'
+
+def test_progress_api_stages_visibility_elapsed_and_stale_token(upload_env):
+    from backend.app.extraction_progress import report_progress
+    c,path,data,settings,worker=upload_env;bid=batch(c)
+    f=upload(c,bid,write_workbook([sheet()]),'progress.xlsx').json();tid=enqueue(c,f['id'])['id']
+    queued=c.get('/api/uploads/tasks').json()['items'][0]
+    assert queued['id']==tid and queued['status']=='waiting' and queued['elapsed_seconds']>=0
+    with connect(path) as db:
+        db.execute("UPDATE extraction_tasks SET status='processing',run_token='current-test-token' WHERE id=?",(tid,))
+    report_progress(path,tid,'current-test-token','extracting',2,5)
+    report_progress(path,tid,'old-token','enriching',5,5)
+    running=task(c,tid)
+    assert running['progress']=={'stage':'extracting','completed':2,'total':5}
+    assert 'run_token' not in running
+    with connect(path) as db:db.execute("UPDATE extraction_tasks SET status='waiting',run_token=NULL WHERE id=?",(tid,))
+    assert worker.run_once()
+    done=c.get('/api/uploads/tasks').json()['items'][0]
+    assert done['status']=='success' and done['progress']['stage']=='completed'
+    assert done['result']['import_id']
+    report_progress(path,tid,'current-test-token','extracting',0,5)
+    assert task(c,tid)['progress']['stage']=='completed'
+    assert c.delete('/api/uploads/batches/'+bid).status_code==200
+    assert c.get('/api/uploads/tasks').json()['items']==[]
+
+def test_progress_list_respects_owner(upload_env,monkeypatch):
+    c,path,data,settings,worker=upload_env;f=upload(c,batch(c),image()).json();enqueue(c,f['id'])
+    import backend.app.uploads as uploads
+    monkeypatch.setattr(uploads,'actor',lambda db:{'id':'other','role':'business','username':'其他业务员'})
+    assert c.get('/api/uploads/tasks').json()['items']==[]

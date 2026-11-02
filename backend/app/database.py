@@ -13,6 +13,8 @@ MIGRATIONS = [
     (7, (Path(__file__).parent / 'migrations/007_ai.sql').read_text()),
     (8, (Path(__file__).parent / 'migrations/008_optional_quote_fields.sql').read_text()),
     (9, (Path(__file__).parent / 'migrations/009_port_metadata.sql').read_text()),
+    (10, (Path(__file__).parent / 'migrations/010_upload_deletion.sql').read_text()),
+    (11, (Path(__file__).parent / 'migrations/011_extraction_progress.sql').read_text()),
 ]
 
 

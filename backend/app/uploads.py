@@ -1,5 +1,6 @@
 """Durable local uploads and extraction queue; only fixed Excel parsing is enabled."""
 from io import BytesIO
+from datetime import datetime,timezone
 import hashlib
 import json
 import logging
@@ -17,6 +18,7 @@ from PIL import Image
 from pypdf import PdfReader
 
 from .database import connect
+from .extraction_progress import report_progress
 from .auth import system_actor
 from .ai_extract import AIError,run_ai,public_status
 from .excel_api import ImportOptions, UnrecognizedTemplate, parse_rows
@@ -88,6 +90,11 @@ def task_data(db,tid,include_result=True):
     if not t:raise HTTPException(404,'提取任务不存在')
     authorized(db,t['batch_id'])
     value=dict(t);value.pop('run_token',None)
+    value['progress']=json.loads(value.pop('progress_json') or '{}')
+    attempt=db.execute('SELECT started_at,finished_at FROM extraction_attempts WHERE task_id=? ORDER BY attempt DESC LIMIT 1',(tid,)).fetchone()
+    start=attempt['started_at'] if attempt else t['created_at']
+    end=attempt['finished_at'] if attempt and attempt['finished_at'] else datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    value['elapsed_seconds']=max(0,int((datetime.fromisoformat(end)-datetime.fromisoformat(start)).total_seconds()))
     value['result']=json.loads(value.pop('raw_result_json') or 'null')
     if not include_result:
         value['result']={k:value['result'][k] for k in ('kind','import_id','ai_import_id','counts','model') if k in value['result']} if value['result'] else None
@@ -127,15 +134,16 @@ class ExtractionWorker:
             task=db.execute("SELECT * FROM extraction_tasks WHERE status='waiting' ORDER BY created_at,rowid LIMIT 1").fetchone()
             if not task:return False
             token=uuid4().hex;attempt=task['attempts']+1
-            db.execute("UPDATE extraction_tasks SET status='processing',attempts=?,run_token=?,error=NULL,error_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",(attempt,token,task['id']))
+            db.execute("UPDATE extraction_tasks SET status='processing',progress_json=?,attempts=?,run_token=?,error=NULL,error_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",(dump({'stage':'reading'}),attempt,token,task['id']))
             db.execute("INSERT INTO extraction_attempts(id,task_id,attempt,status) VALUES (?,?,?,'processing')",(token,task['id'],attempt))
-            f=dict(db.execute('SELECT * FROM uploaded_files WHERE id=?',(task['file_id'],)).fetchone())
+            f=dict(db.execute('SELECT * FROM uploaded_files WHERE id=? AND deleted_at IS NULL',(task['file_id'],)).fetchone())
             audit(db,system_actor(db),'start_extraction','extraction_task',task['id'],after={'attempt':attempt})
         result=None;error=None;code=None
         try:
             path=file_path(self.settings,f);content=path.read_bytes()
             if len(content)!=f['size_bytes'] or hashlib.sha256(content).hexdigest()!=f['sha256']:raise InvalidFile('原件校验失败，文件与上传记录不一致')
             meta=validate_file(content,f['original_name'],self.settings)
+            report_progress(self.database,task['id'],token,'local_parsing')
             if meta['kind']=='xlsx':
                 try:
                     with connect(self.database) as db:parsed=parse_rows(db,content,ImportOptions(),self.settings.upload_max_bytes)
@@ -154,6 +162,7 @@ class ExtractionWorker:
             error=str(exc.detail) if isinstance(exc,HTTPException) else str(exc) if isinstance(exc,(InvalidFile,ValueError)) else '提取发生错误，请重试；仍失败请查看日志'
             logging.getLogger('asw').exception('extraction failed task=%s',task['id'])
         try:
+            report_progress(self.database,task['id'],token,'saving')
             with connect(self.database) as db:
                 db.row_factory=sqlite3.Row;db.execute('BEGIN IMMEDIATE')
                 now=db.execute('SELECT * FROM extraction_tasks WHERE id=?',(task['id'],)).fetchone()
@@ -167,7 +176,7 @@ class ExtractionWorker:
                     db.execute('INSERT INTO ai_imports(id,task_id,file_id,batch_id,preview_json) VALUES (?,?,?,?,?)',(iid,task['id'],f['id'],f['batch_id'],dump(result)))
                     result['ai_import_id']=iid
                 if result and result.get('kind')=='fixed_excel':
-                    imported=db.execute('SELECT id,preview_json FROM excel_imports WHERE sha256=?',(f['sha256'],)).fetchone()
+                    imported=db.execute('SELECT i.id,i.preview_json FROM excel_imports i JOIN upload_batches b ON b.id=i.batch_id JOIN uploaded_files f ON f.id=i.file_id WHERE i.file_id=? AND b.deleted_at IS NULL AND f.deleted_at IS NULL',(f['id'],)).fetchone()
                     iid=imported['id'] if imported else uuid4().hex
                     if not imported:
                         db.execute('INSERT INTO excel_imports(id,batch_id,file_id,sha256,options_json,preview_json) VALUES (?,?,?,?,?,?)',(iid,f['batch_id'],f['id'],f['sha256'],ImportOptions().model_dump_json(),dump(result)))
@@ -175,6 +184,7 @@ class ExtractionWorker:
                     result['import_id']=iid
                 status='waiting' if code=='AI_INTERRUPTED' and self.stop_event.is_set() else 'failed' if error else 'success'
                 db.execute('UPDATE extraction_tasks SET status=?,raw_result_json=?,error=?,error_code=?,run_token=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?',(status,dump(result) if result else None,error,code,task['id']))
+                db.execute('UPDATE extraction_tasks SET progress_json=? WHERE id=?',(dump({'stage':'completed' if status=='success' else 'queued' if status=='waiting' else 'failed'}),task['id']))
                 db.execute('UPDATE extraction_attempts SET status=?,result_json=?,error=?,error_code=?,finished_at=CURRENT_TIMESTAMP WHERE id=?',('failed' if status=='waiting' else status,dump(result) if result else None,error,code,token))
                 audit(db,system_actor(db),'finish_extraction','extraction_task',task['id'],after={'status':status,'attempt':attempt,'error_code':code})
         except Exception:
@@ -201,14 +211,14 @@ def uploads_router(database,settings,worker):
     def batches():
         with connect(database) as db:
             db.row_factory=sqlite3.Row;who=actor(db)
-            rows=db.execute("SELECT b.*,count(f.id) file_count FROM upload_batches b JOIN uploaded_files f ON f.batch_id=b.id WHERE (?='admin' OR b.owner_id=?) GROUP BY b.id ORDER BY b.rowid DESC",(who['role'],who['id'])).fetchall()
-            return {'items':[dict(b) for b in rows]}
+            rows=db.execute("SELECT b.*,count(f.id) file_count FROM upload_batches b JOIN uploaded_files f ON f.batch_id=b.id WHERE b.deleted_at IS NULL AND f.deleted_at IS NULL AND (?='admin' OR b.owner_id=?) GROUP BY b.id ORDER BY b.rowid DESC",(who['role'],who['id'])).fetchall()
+            return {'items':[{**dict(b),'file_names':[f['original_name'] for f in db.execute('SELECT original_name FROM uploaded_files WHERE batch_id=? AND deleted_at IS NULL ORDER BY created_at,rowid',(b['id'],))]} for b in rows]}
     @router.get('/batches/{bid}')
     def detail(bid:str):
         with connect(database) as db:
             db.row_factory=sqlite3.Row;_,b=authorized(db,bid)
             rows=[]
-            for f in db.execute('SELECT * FROM uploaded_files WHERE batch_id=? ORDER BY created_at,rowid',(bid,)).fetchall():
+            for f in db.execute('SELECT * FROM uploaded_files WHERE batch_id=? AND deleted_at IS NULL ORDER BY created_at,rowid',(bid,)).fetchall():
                 value=dict(f);value.pop('storage_key');value['ai_consent']=json.loads(value.pop('ai_consent_json') or 'null');value['metadata']=json.loads(value.pop('metadata_json'))
                 if value['metadata']['kind']=='xlsx' and 'local_parseable' not in value['metadata']:
                     try:
@@ -225,9 +235,9 @@ def uploads_router(database,settings,worker):
         try:
             with connect(database) as db:
                 db.row_factory=sqlite3.Row;db.execute('BEGIN IMMEDIATE');who,_=authorized(db,bid,True)
-                old=db.execute('SELECT f.*,b.owner_id FROM uploaded_files f JOIN upload_batches b ON b.id=f.batch_id WHERE f.sha256=? ORDER BY f.rowid LIMIT 1',(digest,)).fetchone()
+                old=db.execute('SELECT f.*,b.owner_id FROM uploaded_files f JOIN upload_batches b ON b.id=f.batch_id WHERE f.sha256=? AND f.batch_id=? AND f.deleted_at IS NULL AND b.deleted_at IS NULL ORDER BY f.rowid LIMIT 1',(digest,bid)).fetchone()
                 if old and (who['role']=='admin' or old['owner_id']==who['id']):return {'id':old['id'],'batch_id':old['batch_id'],'duplicate':True,'original_name':old['original_name']}
-                count=db.execute('SELECT count(*) FROM uploaded_files WHERE batch_id=?',(bid,)).fetchone()[0]
+                count=db.execute('SELECT count(*) FROM uploaded_files WHERE batch_id=? AND deleted_at IS NULL',(bid,)).fetchone()[0]
                 if count>=settings.upload_max_files:raise HTTPException(422,f'每批最多{settings.upload_max_files}个文件')
                 fid=uuid4().hex;storage=fid+Path(filename).suffix.lower();root=settings.data_dir/'uploads';root.mkdir(parents=True,exist_ok=True);saved=root/storage
                 with saved.open('xb') as output:output.write(content)
@@ -250,10 +260,38 @@ def uploads_router(database,settings,worker):
             content.extend(chunk)
         try:return await run_in_threadpool(save,bid,filename,bytes(content))
         except InvalidFile as exc:raise HTTPException(422,str(exc)) from exc
+    def ensure_idle(db,bid,fid=None):
+        query="SELECT 1 FROM extraction_tasks t JOIN uploaded_files f ON f.id=t.file_id WHERE f.batch_id=? AND t.status='processing'"
+        args=[bid]
+        if fid:query+=' AND f.id=?';args.append(fid)
+        if db.execute(query,args).fetchone():raise HTTPException(409,'正在提取，请等待提取结束后删除')
+    @router.delete('/batches/{bid}')
+    def delete_batch(bid:str):
+        with connect(database) as db:
+            db.row_factory=sqlite3.Row;db.execute('BEGIN IMMEDIATE');who,b=authorized(db,bid)
+            ensure_idle(db,bid)
+            db.execute("UPDATE extraction_tasks SET status='failed',error_code='DELETED',error='已删除',run_token=NULL WHERE status='waiting' AND file_id IN (SELECT id FROM uploaded_files WHERE batch_id=?)",(bid,))
+            db.execute('UPDATE upload_batches SET deleted_at=CURRENT_TIMESTAMP,revision=revision+1 WHERE id=?',(bid,))
+            audit(db,who,'delete_upload_batch','upload_batch',bid,after={'previous_status':b['status'],'published_quotes_preserved':True})
+        return {'deleted':True,'published_quotes_preserved':True}
+    @router.delete('/files/{fid}')
+    def delete_file(fid:str):
+        with connect(database) as db:
+            db.row_factory=sqlite3.Row;db.execute('BEGIN IMMEDIATE')
+            f=db.execute('SELECT * FROM uploaded_files WHERE id=? AND deleted_at IS NULL',(fid,)).fetchone()
+            if not f:raise HTTPException(404,'文件不存在')
+            who,_=authorized(db,f['batch_id'],True);ensure_idle(db,f['batch_id'],fid)
+            if db.execute('SELECT 1 FROM source_evidence WHERE file_id=? AND draft_row_id IS NOT NULL',(fid,)).fetchone():
+                raise HTTPException(409,'此文件已生成校对报价，请在历史列表删除整个批次')
+            db.execute("UPDATE extraction_tasks SET status='failed',error_code='DELETED',error='已删除',run_token=NULL WHERE file_id=? AND status='waiting'",(fid,))
+            db.execute('UPDATE uploaded_files SET deleted_at=CURRENT_TIMESTAMP WHERE id=?',(fid,))
+            db.execute('UPDATE upload_batches SET revision=revision+1 WHERE id=?',(f['batch_id'],))
+            audit(db,who,'delete_upload_file','uploaded_file',fid)
+        return {'deleted':True}
     @router.get('/files/{fid}/original')
     def original(fid:str):
         with connect(database) as db:
-            db.row_factory=sqlite3.Row;f=db.execute('SELECT * FROM uploaded_files WHERE id=?',(fid,)).fetchone()
+            db.row_factory=sqlite3.Row;f=db.execute('SELECT * FROM uploaded_files WHERE id=? AND deleted_at IS NULL',(fid,)).fetchone()
             if not f:raise HTTPException(404,'原件不存在')
             who,_=authorized(db,f['batch_id']);path=file_path(settings,f)
             # Do not inline untrusted documents; browser preview uses image object URLs only.
@@ -266,7 +304,7 @@ def uploads_router(database,settings,worker):
         try:
             with connect(database) as db:
                 db.row_factory=sqlite3.Row;db.execute('BEGIN IMMEDIATE')
-                old=db.execute('SELECT * FROM uploaded_files WHERE id=?',(fid,)).fetchone()
+                old=db.execute('SELECT * FROM uploaded_files WHERE id=? AND deleted_at IS NULL',(fid,)).fetchone()
                 if not old:raise HTTPException(404,'原件不存在')
                 who,_=authorized(db,old['batch_id'])
                 content=file_path(settings,old).read_bytes()
@@ -286,18 +324,24 @@ def uploads_router(database,settings,worker):
     @router.post('/files/{fid}/extract')
     def extract(fid:str):
         with connect(database) as db:
-            db.row_factory=sqlite3.Row;db.execute('BEGIN IMMEDIATE');f=db.execute('SELECT * FROM uploaded_files WHERE id=?',(fid,)).fetchone()
+            db.row_factory=sqlite3.Row;db.execute('BEGIN IMMEDIATE');f=db.execute('SELECT * FROM uploaded_files WHERE id=? AND deleted_at IS NULL',(fid,)).fetchone()
             if not f:raise HTTPException(404,'原件不存在')
             who,_=authorized(db,f['batch_id']);old=db.execute('SELECT * FROM extraction_tasks WHERE file_id=?',(fid,)).fetchone()
             if old and old['status'] in ('waiting','processing','success'):return {'id':old['id'],'status':old['status'],'reused':True}
             authorized(db,f['batch_id'],True)
             if old:
-                tid=old['id'];db.execute("UPDATE extraction_tasks SET status='waiting',error=NULL,error_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",(tid,))
+                tid=old['id'];db.execute("UPDATE extraction_tasks SET status='waiting',progress_json='{}',error=NULL,error_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",(tid,))
             else:
                 tid=uuid4().hex;db.execute("INSERT INTO extraction_tasks(id,file_id,status) VALUES (?,?,'waiting')",(tid,fid))
             audit(db,who,'retry_extraction' if old else 'queue_extraction','extraction_task',tid)
         worker.wake.set()
         return {'id':tid,'status':'waiting','reused':False}
+    @router.get('/tasks')
+    def recent_tasks():
+        with connect(database) as db:
+            db.row_factory=sqlite3.Row;who=actor(db)
+            rows=db.execute("SELECT t.id FROM extraction_tasks t JOIN uploaded_files f ON f.id=t.file_id JOIN upload_batches b ON b.id=f.batch_id WHERE f.deleted_at IS NULL AND b.deleted_at IS NULL AND (?='admin' OR b.owner_id=?) ORDER BY CASE WHEN t.status IN ('waiting','processing') THEN 0 ELSE 1 END,t.updated_at DESC,t.rowid DESC LIMIT 100",(who['role'],who['id'])).fetchall()
+            return {'items':[task_data(db,row['id'],False) for row in rows]}
     @router.get('/tasks/{tid}')
     def task(tid:str):
         with connect(database) as db:

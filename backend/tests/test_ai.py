@@ -362,3 +362,48 @@ def test_workbook_wrong_amount_and_empty_range_not_accepted(env):
         row=ai.normalize_quote(db,ai.Quote.model_validate(q),doc,{'worksheet':'Rates','rows':[2,2]})
     assert row['data']['prices']=={}
     with pytest.raises(ai.AIError):ai.source_text(ai.Source(id='r',worksheet='Rates',cell_range='A3:B3',excerpt='made up'),doc,{'worksheet':'Rates','rows':[3,3]},True)
+
+@pytest.mark.parametrize('label',['特别说明：','Special instructions:','费用说明：'])
+def test_unlabelled_business_instructions_not_remarks(env,label):
+    c,path,settings,worker=env;q=quote();q['facts']['remark']='仅限普货'
+    q['sources'].append({'id':'remark','page':1,'excerpt':label+'仅限普货'});q['field_sources']['remark']=['remark']
+    with connect(path) as db:
+        db.row_factory=__import__('sqlite3').Row
+        row=ai.normalize_quote(db,ai.Quote.model_validate(q),ai.Document('image',[],{},{},''),{'pages':[1]})
+    assert row['data']['remark']==''
+
+def test_ai_source_always_left_for_manual_entry(env):
+    c,path,settings,worker=env;q=quote()
+    with connect(path) as db:
+        db.row_factory=__import__('sqlite3').Row
+        row=ai.normalize_quote(db,ai.Quote.model_validate(q),ai.Document('image',[],{},{},''),{'pages':[1]})
+    assert row['data']['source_series_id']==''
+    assert not row.get('facts',{}).get('supplier')
+
+@pytest.mark.parametrize('rownum,expected',[(3,True),(5,False)])
+def test_merged_port_inherited_only_inside_confirmed_group(env,rownum,expected):
+    c,path,settings,worker=env
+    q=ai.Quote.model_validate({'facts':{'carrier':'测试船公司a'},'prices':{'20GP':'1000'},'sources':[{'id':'r','worksheet':'Rates','cell_range':f'B{rownum}:C{rownum}','excerpt':'测试船公司a 1000'}]})
+    sheet={'name':'Rates','cells':{'A2':'ROTTERDAM',f'B{rownum}':'测试船公司a',f'C{rownum}':'1000'},'formulas':set(),'merges':[('A',2,'A',4)]}
+    document=ai.Document('xlsx',[],{'Rates':sheet},{},'')
+    with connect(path) as db:
+        db.row_factory=__import__('sqlite3').Row
+        item=ai.inherit_merged_destination(db,q,document)
+        assert (item.facts.get('destination_port')=='ROTTERDAM') is expected
+        if expected:
+            normalized=ai.normalize_quote(db,item,document,{'worksheet':'Rates','rows':[rownum,rownum]})
+            assert normalized['data']['destination_port_id']
+            assert normalized['display']['destination']['name_en']=='ROTTERDAM'
+
+def test_ai_progress_reports_real_segments_and_enrichment(env,monkeypatch):
+    c,path,settings,worker=env;events=[];original=ai.report_progress
+    def record(database,tid,token,stage,completed=0,total=0):
+        events.append((stage,completed,total));original(database,tid,token,stage,completed,total)
+    monkeypatch.setattr(ai,'report_progress',record)
+    monkeypatch.setattr(ai,'call_deepseek',lambda *_:response())
+    f=upload(c,batch(c),image()).json();consent(c,f['id']);tid=enqueue(c,f['id'])['id']
+    assert worker.run_once()
+    assert task(c,tid)['status']=='success'
+    assert ('extracting',0,1) in events and ('extracting',1,1) in events
+    assert any(stage=='enriching' for stage,_,_ in events)
+    assert task(c,tid)['progress']['stage']=='completed'

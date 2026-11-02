@@ -67,9 +67,9 @@ def test_import_preview_commit_edit_provenance_idempotency(env):
     row=result['rows'][0]
     assert row['data']['prices']['20GP']=='1000.25'
     assert row['data']['valid_from']=='2026-11-01' and row['data']['valid_to']=='2026-11-30'
-    assert row['data']['carrier_id']=='carrier-a' and row['data']['source_series_id']=='series-a'
+    assert row['data']['carrier_id']=='carrier-a' and row['data']['source_series_id']==''
     assert row['data']['remark']=='=literal text'
-    assert [i['field'] for i in row['issues']]==['origin_confirmed']
+    assert [i['field'] for i in row['issues']]==['source_series_id','origin_confirmed']
     selected={'row_ids':[row['id']]}
     committed=client.post(f"/api/excel/imports/{result['id']}/commit",json=selected)
     assert committed.status_code==200 and committed.json()['created']==1
@@ -80,7 +80,7 @@ def test_import_preview_commit_edit_provenance_idempotency(env):
     saved=client.get('/api/manual-drafts').json()['items'][0]
     assert saved['origin_kind']=='excel' and saved['original_import']['英文港口名']=='ROTTERDAM'
     assert saved['evidence'][0]['original_name']=='测试报价.xlsx' and saved['evidence'][0]['cell_range']=='A8:R8'
-    updated={**saved['data'],'origin_confirmed':True}
+    updated={**saved['data'],'origin_confirmed':True,'source_series_id':'series-a'}
     assert client.put(f"/api/manual-drafts/{saved['id']}?expected_revision=1",json=updated).json()['ready_for_review']
     assert client.post('/api/quotes/search',json={}).json()['total']==0
     assert client.post('/api/manual-drafts/search',json={}).json()['total']==1

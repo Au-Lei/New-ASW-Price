@@ -128,11 +128,8 @@ def parse_rows(db,content,options,max_file=MAX_FILE):
             carrier_text=raw.get('船公司','').strip()
             data['carrier_id']=one([c for c in carriers if normalize(carrier_text) in {normalize(c['name']),*[normalize(a['name']) for a in carrier_aliases if a['carrier_id']==c['id']]}]) if carrier_text else ''
             if not data['carrier_id']:mapping.append('船公司未匹配，请先维护基础资料或人工选择')
-            source=raw.get('价格来源','').strip()
-            if raw.get('报价供应商') and raw.get('协议／报价系列'):
-                source=raw['报价供应商']+' · '+raw['协议／报价系列']
-            data['source_series_id']=one([s for s in series if normalize(source) in {normalize(s['name']),normalize(s['supplier_name']+' · '+s['name'])}]) if source else options.source_series_id
-            if not data['source_series_id']:mapping.append('报价来源未唯一匹配，请选择供应商的协议／报价系列')
+            data['source_series_id']=options.source_series_id
+            if not data['source_series_id']:mapping.append('价格来源由人工填写')
             route_candidates=[r for r in routes if normalize(r['name'])==normalize(raw.get('航线','')) and (data['destination_port_id'],r['id']) in memberships]
             if len(route_candidates)>1:route_candidates=[r for r in route_candidates if r['region_name']==sheet['name']]
             data['route_id']=one(route_candidates)
@@ -234,7 +231,7 @@ def excel_router(database,settings):
             db.row_factory=sqlite3.Row
             from .auth import current_actor
             who=current_actor(db)
-            rows=db.execute("SELECT i.id,i.status,i.created_at,i.selection_json,f.original_name FROM excel_imports i JOIN uploaded_files f ON f.id=i.file_id JOIN upload_batches b ON b.id=i.batch_id WHERE (?='admin' OR b.owner_id=?) ORDER BY i.created_at DESC,i.rowid DESC",(who['role'],who['id'])).fetchall()
+            rows=db.execute("SELECT i.id,i.status,i.created_at,i.selection_json,f.original_name FROM excel_imports i JOIN uploaded_files f ON f.id=i.file_id JOIN upload_batches b ON b.id=i.batch_id WHERE b.deleted_at IS NULL AND f.deleted_at IS NULL AND (?='admin' OR b.owner_id=?) ORDER BY i.created_at DESC,i.rowid DESC",(who['role'],who['id'])).fetchall()
             return {'items':[{**dict(row),'committed_count':len(json.loads(row['selection_json'] or '[]'))} for row in rows]}
 
     @router.get('/imports/{identity}')
@@ -246,7 +243,7 @@ def excel_router(database,settings):
         with connect(database) as db:
             db.row_factory=sqlite3.Row
             db.execute('BEGIN IMMEDIATE')
-            old=db.execute('SELECT id FROM excel_imports WHERE sha256=?',(digest,)).fetchone()
+            old=db.execute('SELECT i.id FROM excel_imports i JOIN upload_batches b ON b.id=i.batch_id JOIN uploaded_files f ON f.id=i.file_id WHERE i.sha256=? AND b.deleted_at IS NULL AND f.deleted_at IS NULL',(digest,)).fetchone()
             if old:return {**response_data(db,old['id']),'duplicate':True}
             parsed=parse_rows(db,content,options)
             identity,batch_id,file_id=uuid4().hex,uuid4().hex,uuid4().hex

@@ -76,7 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response = error(request,exc.status_code,str(exc.detail))
         finally:
             if token is not None:principal_id.reset(token)
-        if request.url.path.startswith('/api/'):
+        if request.url.path.startswith('/api/') or request.url.path in ('/','/index.html','/quotation.html','/quotation-app.js'):
             response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'same-origin'
